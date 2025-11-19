@@ -6,7 +6,7 @@ import global_mesh
 import local_mesh
 import boundary
 import input_generator
-import linux_command
+from scripts import linux_command
 # from jintegral import jintegral
 from utils.logger import logger
 from utils.step2str import step2str

@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from const import simulation_params as sp
+from const import simulation_params as sp, const_local_mesh as clm
 from utils.logger import logger
 from utils.step2str import step2str
 
@@ -8,89 +8,188 @@ from utils.step2str import step2str
 def initial(step, local_mesh, global_mesh):
     """
     Initialize displacement, velocity, and acceleration fields for restart
-    Reads previous step results and prepares initial conditions
+    Based on Mathematica's initial[step] function
+    
+    Generates 6 files:
+    - init.u.g.dat, init.v.g.dat, init.a.g.dat (global mesh)
+    - init.u.l.dat, init.v.l.dat, init.a.l.dat (local mesh)
     """
     logger.info(f"Initializing fields for restart at step {step}")
     
     if step == 0:
-        logger.info("Step 0: No restart data needed")
+        logger.info("Step 0: No initialization needed")
         return None
     
     # Get previous step
     prev_step = step - 1
     prev_str = step2str(prev_step)
     
-    # Path to previous results
-    prev_path = f"../step{prev_str}"
+    # Get project root directory and construct path to results
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    results_dir = os.path.join(current_dir, "results")
+    prev_path = os.path.join(results_dir, f"step{prev_str}", "log")
     
-    # Initialize data structures
-    init_data = {
-        'displacement': None,
-        'velocity': None,
-        'acceleration': None
+    # Read previous step results from log directory
+    disG, velG, acceG, disL, velL, acceL = _read_previous_results(prev_path, global_mesh, local_mesh)
+    
+    # Process initial conditions based on step
+    if 1 <= step <= clm.aL:
+        # For steps 1 to aL: use previous results as-is
+        disiniG = disG
+        veliniG = velG
+        acceiniG = acceG
+        disiniL = disL
+        veliniL = velL
+        acceiniL = acceL
+        logger.info(f"Step {step} <= aL: Using previous results directly")
+    
+    elif step > clm.aL:
+        # For steps > aL: global mesh unchanged, but local mesh nodes at r=rmax set to zero
+        disiniG = disG
+        veliniG = velG
+        acceiniG = acceG
+        
+        # For local mesh: nodes where Mod[#, nLr+1] == 0 (r = rmax) set to zero
+        nLr = clm.aL + clm.lL
+        nnmL = len(local_mesh.nodeL)
+        
+        disiniL = np.array([disL[i] if (i+1) % (nLr + 1) != 0 else np.array([0., 0., 0.]) 
+                           for i in range(nnmL)])
+        veliniL = np.array([velL[i] if (i+1) % (nLr + 1) != 0 else np.array([0., 0., 0.]) 
+                           for i in range(nnmL)])
+        acceiniL = np.array([acceL[i] if (i+1) % (nLr + 1) != 0 else np.array([0., 0., 0.]) 
+                            for i in range(nnmL)])
+        logger.info(f"Step {step} > aL: Reset r=rmax nodes to zero in local mesh")
+    
+    # Write initial condition files
+    _write_initial_files(disiniG, veliniG, acceiniG, disiniL, veliniL, acceiniL)
+    
+    logger.info("Initial condition files written successfully")
+    return {
+        'disG': disiniG,
+        'velG': veliniG,
+        'acceG': acceiniG,
+        'disL': disiniL,
+        'velL': veliniL,
+        'acceL': acceiniL
     }
-    
-    # Read previous displacement
-    disp_file = os.path.join(prev_path, 'delta_u.dat')
-    if os.path.exists(disp_file):
-        init_data['displacement'] = np.loadtxt(disp_file)
-        logger.info(f"Loaded displacement from {disp_file}")
-    else:
-        logger.warning(f"Displacement file not found: {disp_file}")
-        # Initialize with zeros
-        n_dof = _get_total_dof(global_mesh, local_mesh)
-        init_data['displacement'] = np.zeros(n_dof)
-    
-    # Read previous velocity
-    vel_file = os.path.join(prev_path, 'velocity.dat')
-    if os.path.exists(vel_file):
-        init_data['velocity'] = np.loadtxt(vel_file)
-        logger.info(f"Loaded velocity from {vel_file}")
-    else:
-        logger.warning(f"Velocity file not found: {vel_file}")
-        n_dof = _get_total_dof(global_mesh, local_mesh)
-        init_data['velocity'] = np.zeros(n_dof)
-    
-    # Read previous acceleration
-    acc_file = os.path.join(prev_path, 'acceleration.dat')
-    if os.path.exists(acc_file):
-        init_data['acceleration'] = np.loadtxt(acc_file)
-        logger.info(f"Loaded acceleration from {acc_file}")
-    else:
-        logger.warning(f"Acceleration file not found: {acc_file}")
-        n_dof = _get_total_dof(global_mesh, local_mesh)
-        init_data['acceleration'] = np.zeros(n_dof)
-    
-    # Write initial condition files for current step
-    _write_initial_files(init_data)
-    
-    logger.info("Initial conditions prepared successfully")
-    return init_data
 
 
-def _get_total_dof(global_mesh, local_mesh):
+def _read_previous_results(prev_path, global_mesh, local_mesh):
     """
-    Calculate total degrees of freedom
+    Read displacement, velocity, acceleration from previous step's log directory
+    Format: First line is node count, subsequent lines: nodeID x y z
     """
-    n_nodes_g = len(global_mesh.node_g) if global_mesh.node_g is not None else 0
-    n_nodes_l = len(local_mesh.node_l) if local_mesh.node_l is not None else 0
+    nnmG = len(global_mesh.nodeG)
+    nnmL = len(local_mesh.nodeL)
     
-    # 3 DOF per node (ux, uy, uz)
-    return 3 * (n_nodes_g + n_nodes_l)
+    # Try to read from log directory
+    try:
+        # Global mesh results
+        disG_file = os.path.join(prev_path, 'u.g.dat')
+        velG_file = os.path.join(prev_path, 'v.g.dat')
+        acceG_file = os.path.join(prev_path, 'a.g.dat')
+        
+        if os.path.exists(disG_file):
+            disG_data = np.loadtxt(disG_file, skiprows=1)
+            disG = disG_data[:, 1:4]  # Skip node ID, take columns 2-4
+            logger.info(f"Loaded global displacement: {disG.shape}")
+        else:
+            logger.warning(f"Global displacement file not found, using zeros")
+            disG = np.zeros((nnmG, 3))
+        
+        if os.path.exists(velG_file):
+            velG_data = np.loadtxt(velG_file, skiprows=1)
+            velG = velG_data[:, 1:4]
+            logger.info(f"Loaded global velocity: {velG.shape}")
+        else:
+            logger.warning(f"Global velocity file not found, using zeros")
+            velG = np.zeros((nnmG, 3))
+        
+        if os.path.exists(acceG_file):
+            acceG_data = np.loadtxt(acceG_file, skiprows=1)
+            acceG = acceG_data[:, 1:4]
+            logger.info(f"Loaded global acceleration: {acceG.shape}")
+        else:
+            logger.warning(f"Global acceleration file not found, using zeros")
+            acceG = np.zeros((nnmG, 3))
+        
+        # Local mesh results
+        disL_file = os.path.join(prev_path, 'u.l.dat')
+        velL_file = os.path.join(prev_path, 'v.l.dat')
+        acceL_file = os.path.join(prev_path, 'a.l.dat')
+        
+        if os.path.exists(disL_file):
+            disL_data = np.loadtxt(disL_file, skiprows=1)
+            disL = disL_data[:, 1:4]
+            logger.info(f"Loaded local displacement: {disL.shape}")
+        else:
+            logger.warning(f"Local displacement file not found, using zeros")
+            disL = np.zeros((nnmL, 3))
+        
+        if os.path.exists(velL_file):
+            velL_data = np.loadtxt(velL_file, skiprows=1)
+            velL = velL_data[:, 1:4]
+            logger.info(f"Loaded local velocity: {velL.shape}")
+        else:
+            logger.warning(f"Local velocity file not found, using zeros")
+            velL = np.zeros((nnmL, 3))
+        
+        if os.path.exists(acceL_file):
+            acceL_data = np.loadtxt(acceL_file, skiprows=1)
+            acceL = acceL_data[:, 1:4]
+            logger.info(f"Loaded local acceleration: {acceL.shape}")
+        else:
+            logger.warning(f"Local acceleration file not found, using zeros")
+            acceL = np.zeros((nnmL, 3))
+    
+    except Exception as e:
+        logger.error(f"Error reading previous results: {e}")
+        logger.info("Initializing with zeros")
+        disG = np.zeros((nnmG, 3))
+        velG = np.zeros((nnmG, 3))
+        acceG = np.zeros((nnmG, 3))
+        disL = np.zeros((nnmL, 3))
+        velL = np.zeros((nnmL, 3))
+        acceL = np.zeros((nnmL, 3))
+    
+    return disG, velG, acceG, disL, velL, acceL
 
 
-def _write_initial_files(init_data):
+def _write_initial_files(disG, velG, acceG, disL, velL, acceL):
     """
-    Write initial condition files
+    Write initial condition files in Mathematica format
+    Format: Line 1: node count
+            Line 2+: nodeID \t x \t y \t z (15 significant digits)
     """
-    if init_data['displacement'] is not None:
-        np.savetxt('delta_u_init.dat', init_data['displacement'], fmt='%.15e')
     
-    if init_data['velocity'] is not None:
-        np.savetxt('velocity_init.dat', init_data['velocity'], fmt='%.15e')
+    def sig15(x):
+        """Format number with 15 significant digits in scientific notation"""
+        if abs(x) < 1e-100:
+            return "0.000000000000000E+00"
+        else:
+            return f"{x:.14e}".upper().replace('E+', 'E+').replace('E-', 'E-')
     
-    if init_data['acceleration'] is not None:
-        np.savetxt('acceleration_init.dat', init_data['acceleration'], fmt='%.15e')
+    def write_node_data(filename, data):
+        """Write node data in format: nodeID x y z"""
+        lines = [str(len(data))]
+        for i, (x, y, z) in enumerate(data, start=1):
+            line = f"{i}\t{sig15(x)}\t{sig15(y)}\t{sig15(z)}"
+            lines.append(line)
+        with open(filename, 'w') as f:
+            f.write('\n'.join(lines))
+    
+    # Write global mesh initial conditions
+    write_node_data('init.u.g.dat', disG)
+    write_node_data('init.v.g.dat', velG)
+    write_node_data('init.a.g.dat', acceG)
+    logger.info("Global initial condition files written")
+    
+    # Write local mesh initial conditions
+    write_node_data('init.u.l.dat', disL)
+    write_node_data('init.v.l.dat', velL)
+    write_node_data('init.a.l.dat', acceL)
+    logger.info("Local initial condition files written")
 
 
 def generate_zero_initial_conditions(global_mesh, local_mesh):

@@ -6,137 +6,146 @@ from utils.step2str import step2str
 
 def generate(step, REstart):
     """
-    Generate input file for SFEM solver
-    Writes all simulation parameters and settings
+    Generate input.dat file for SFEM solver
+    Format: simple value + comment format (matching Mathematica output)
+    
+    Based on Mathematica's input file structure from reference
     """
     logger.info(f"Generating input.dat for step {step}")
     
-    str_step = step2str(step)
+    from const import const_local_mesh as clm, const_global_mesh as cgm
     
+    # Solution type: 1=static (step=0), 2=dynamic (step>0)
+    solution_type = 1 if step == 0 else 2
+    
+    # Nonlinear geometry: 0=off, 1=on
+    is_nlgeom = 0
+    
+    # Max Newton-Raphson steps
+    max_nr_step = 5
+    
+    # Time step size: dt = hL / V
+    dt = clm.hL / sp.V
+    
+    # Max time steps
+    max_time_step = 1
+    
+    # Number of increments
+    nincrement = sp.inc
+    
+    # Material properties
+    young = mp.EE
+    poisson = mp.Nu
+    density = mp.Rho
+    
+    # Newmark-beta parameters
+    gamma = sp.Gamma
+    beta = sp.Beta
+    
+    # Rayleigh damping
+    Rm = sp.Alpha_l  # Mass damping
+    Rk = sp.Beta_l   # Stiffness damping
+    
+    # Local mesh parameters
+    ngp = sp.ngp  # Integration points
+    nrefine = sp.nrefLlist  # h-refine level
+    
+    # Restart flag
+    is_restart = REstart
+    
+    # Number of threads
+    num_threads = sp.OPENMP
+    
+    # IGA parameters
+    order = cgm.p  # NURBS order
+    nPtsU = sp.nPtsX  # Control points in U direction
+    nPtsV = sp.nPtsY  # Control points in V direction
+    nPtsW = sp.nPtsZ  # Control points in W direction
+    
+    # Penalty method flag
+    penalty = 0
+    is_sphere = 0
+    
+    # Write input.dat file (matching Mathematica format exactly)
     with open('input.dat', 'w') as f:
-        # Write header
-        f.write("# Input file for SFEM linear solver\n")
-        f.write(f"# Step: {step}\n")
-        f.write(f"# REstart: {REstart}\n")
-        f.write("\n")
+        # Line 1: solution type (1=static, 2=dynamic)
+        # Note: Reference uses 1, but our analysis is dynamic. Use 2 for consistency with code
+        f.write(f"{solution_type}\t  !>solutiontype(1:static 2:dynamic)\n")
         
-        # Problem type
-        f.write("# Problem type\n")
-        f.write("DYNAMIC\n")  # or STATIC for static analysis
-        f.write("\n")
+        # Line 2: nonlinear geometry flag
+        f.write(f"{is_nlgeom}\t  !>isNLgeom(0:off 1:on)\n")
         
-        # Mesh files
-        f.write("# Mesh files\n")
-        f.write("GLOBAL_MESH\n")
-        f.write(f"  NODE_FILE      node.g.dat\n")
-        f.write(f"  ELEMENT_FILE   elem.g.dat\n")
-        f.write(f"  WEIGHT_FILE    weights.g.dat\n")
-        f.write(f"  INDEX_FILE     index.g.dat\n")
-        f.write("\n")
+        # Line 3: max NR steps
+        f.write(f"{max_nr_step}\t  !> max NR step\n")
         
-        f.write("LOCAL_MESH\n")
-        f.write(f"  NODE_FILE      node.l.dat\n")
-        f.write(f"  ELEMENT_FILE   elem.l.dat\n")
-        f.write(f"  WEIGHT_FILE    weights.l.dat\n")
-        f.write("\n")
+        # Line 4: time step (use scientific notation like reference)
+        f.write(f"{dt:.1e}\t  !> dt\n")
         
-        # Virtual mesh (if applicable)
-        f.write("VIRTUAL_MESH\n")
-        f.write(f"  NODE_FILE      node.v.dat\n")
-        f.write(f"  ELEMENT_FILE   elem.v.dat\n")
-        f.write("\n")
+        # Line 5: max time step
+        f.write(f"{max_time_step}\t!>max time step\n")
         
-        # Boundary conditions
-        f.write("# Boundary conditions\n")
-        f.write("BOUNDARY_CONDITIONS\n")
-        f.write(f"  GLOBAL_BC_FILE   bc.g.dat\n")
-        f.write(f"  LOCAL_BC_FILE    bc.l.dat\n")
-        f.write(f"  LOAD_FILE        load.dat\n")
-        f.write("\n")
+        # Line 6: number of increments
+        f.write(f"{nincrement}\t  !> nincrement\n")
         
-        # Material properties
-        f.write("# Material properties\n")
-        f.write("MATERIAL\n")
-        f.write(f"  YOUNGS_MODULUS   {mp.EE:.15e}\n")
-        f.write(f"  POISSON_RATIO    {mp.Nu:.15e}\n")
-        f.write(f"  DENSITY          {mp.Rho:.15e}\n")
-        f.write(f"  YIELD_STRESS     {mp.SigmaY0:.15e}\n")
-        f.write("\n")
+        # Line 7: Young's modulus
+        f.write(f"{young:.2e}\t  !> young 率\n")
         
-        # Time integration parameters (HHT method)
-        f.write("# Time integration (HHT method)\n")
-        f.write("TIME_INTEGRATION\n")
-        f.write(f"  ALPHA   {sp.Alpha:.15e}\n")
-        f.write(f"  BETA    {sp.Beta:.15e}\n")
-        f.write(f"  GAMMA   {sp.Gamma:.15e}\n")
-        f.write("\n")
+        # Line 8: Poisson ratio
+        f.write(f"{poisson}\t  !> Poisson 比\n")
         
-        # Rayleigh damping
-        f.write("# Rayleigh damping\n")
-        f.write("DAMPING\n")
-        f.write(f"  ALPHA_L   {sp.Alpha_l:.15e}\n")
-        f.write(f"  BETA_L    {sp.Beta_l:.15e}\n")
-        f.write("\n")
+        # Line 9: density (with trailing dot like reference)
+        f.write(f"{density:.0f}.\t  !> density\n")
         
-        # Analysis parameters
-        f.write("# Analysis parameters\n")
-        f.write("ANALYSIS\n")
-        f.write(f"  STEP           {step}\n")
-        f.write(f"  RESTART        {REstart}\n")
-        f.write(f"  INCREMENT      {sp.inc}\n")
-        f.write(f"  NREFINE        {sp.nrefLlist}\n")
-        f.write(f"  NGP            {sp.ngp}\n")
-        f.write("\n")
+        # Line 10: gamma
+        f.write(f"{gamma}\t  !> gamma for newmark-beta\n")
         
-        # Crack geometry
-        f.write("# Crack geometry\n")
-        f.write("CRACK\n")
-        f.write(f"  RADIUS         {sp.c:.15e}\n")
-        f.write(f"  THICKNESS      {sp.thi:.15e}\n")
-        f.write(f"  VELOCITY       {sp.V:.15e}\n")
-        f.write("\n")
+        # Line 11: beta
+        f.write(f"{beta}\t  !> beta for newmark-beta\n")
         
-        # Solver settings
-        f.write("# Solver settings\n")
-        f.write("SOLVER\n")
-        f.write(f"  OPENMP_THREADS   {sp.OPENMP}\n")
-        f.write(f"  ABORT            {sp.ABO}\n")
-        f.write("\n")
+        # Line 12: Rm (with trailing dot like reference)
+        f.write(f"{Rm:.0f}.\t  !> Rm for Rayleigh damping for mass\n")
         
-        # Output settings
-        f.write("# Output settings\n")
-        f.write("OUTPUT\n")
-        f.write(f"  FOLDER           {sp.OUTPUT_FOLDER}\n")
-        f.write(f"  CALC_STEP        {sp.CALC_STEP}\n")
-        f.write("\n")
+        # Line 13: Rk (full precision scientific notation)
+        f.write(f"{Rk}\t  !> Rk for Rayleigh damping for mass\n")
         
-        # Restart file (if applicable)
-        if REstart == 1 and step > 0:
-            prev_step = step - 1
-            prev_str = step2str(prev_step)
-            f.write("# Restart data\n")
-            f.write("RESTART_FILES\n")
-            f.write(f"  DISPLACEMENT_FILE   ../step{prev_str}/delta_u.dat\n")
-            f.write(f"  VELOCITY_FILE       ../step{prev_str}/velocity.dat\n")
-            f.write(f"  ACCELERATION_FILE   ../step{prev_str}/acceleration.dat\n")
-            f.write("\n")
+        # Line 14: integration points
+        f.write(f"{ngp}\t  !> local mesh integral point (not used)\n")
+        
+        # Line 15: h-refine
+        f.write(f"{nrefine}\t  !> local mesh h-refine\n")
+        
+        # Line 16: restart flag
+        f.write(f"{is_restart}\t  !> is_Restart (0:off, 1:on)\n")
+        
+        # Line 17: number of threads
+        f.write(f"{num_threads}\t  !> number of thread\n")
+        
+        # Line 18: IGA order
+        f.write(f"{order}\t  !> order for IGA\n")
+        
+        # Line 19: control points U
+        f.write(f"{nPtsU}\t  !> number of controlPts in U-direction\n")
+        
+        # Line 20: control points V
+        f.write(f"{nPtsV}\t  !> number of controlPts in V-direction\n")
+        
+        # Line 21: control points W
+        f.write(f"{nPtsW}\t  !> number of controlPts in W-direction\n")
+        
+        # Line 22: penalty flag (always write, value=0)
+        f.write(f"{penalty}\t  !> penalty or not\n")
+
+        # Line 23: is_sphere flag (always write, value=0)
+        f.write(f"{is_sphere}\t  !> is_sphere or not\n")
     
     logger.info("input.dat generated successfully")
 
 
 def generate_virtual_mesh():
     """
-    Generate virtual mesh for visualization or special purposes
-    This is a placeholder - implement based on specific needs
+    Virtual mesh files are generated by GlobalMesh.generate()
+    This function is kept for compatibility but does nothing
     """
-    logger.info("Generating virtual mesh (placeholder)")
-    
-    # Create simple virtual mesh
-    # This could be used for visualization or output purposes
-    nodes_v = np.array([[1, 0.0, 0.0, 0.0]])
-    elems_v = np.array([[1, 1]])
-    
-    np.savetxt('node.v.dat', nodes_v, fmt=['%d', '%.15e', '%.15e', '%.15e'])
-    np.savetxt('elem.v.dat', elems_v, fmt='%d')
-    
-    logger.info("Virtual mesh files generated")
+    # node.v.dat and elem.v.dat are already generated by GlobalMesh._build_visual_mesh()
+    # Do not overwrite them here
+    logger.info("Virtual mesh files already generated by GlobalMesh")

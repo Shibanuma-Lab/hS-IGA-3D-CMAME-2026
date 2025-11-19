@@ -1,7 +1,10 @@
-hL = 0.05 * 10**-3 # Lenght of local element
+# Local mesh parameters (from param.txt)
 
-aL = 12 # Number of local element on crack surface
-lL = 15 # Number of local element on ligamanet surface
-HL = 8 # Number of local element on thickness direction
+hL = 0.04 * 10**-3  # Length of local element [m]
 
+aL = 9  # Number of local elements on crack surface
+lL = 15  # Number of local elements on ligament surface
+HL = 8  # Number of local elements in thickness direction
+
+d_theta = 3  # Angular resolution [degrees]
 

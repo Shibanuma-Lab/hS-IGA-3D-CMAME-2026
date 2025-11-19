@@ -1,17 +1,45 @@
 import datetime
 from const import material_property as mp
-from const import const_local_mesh
+from const import const_local_mesh as clm
+from const import const_global_mesh as cgm
 
-c = 10.0e-3  # Crack radius [m]
+# Crack geometry (from param.txt)
+c = 4.0e-3  # Crack radius [m]
 thi = 1.0  # Thickness [m]
-V = 400 # Velocity [m/s]
 
-# stepall = round(c / const_local_mesh.hL)
-step_start = 0
-step_end = 6
+# Crack velocity (from param.txt)
+V = 1000.0  # Velocity [m/s]
 
-stepall = step_end
-nofix = 1
+# Step control
+step_start = 0  # stepini
+step_end = 10  # stepend (-1 means calculate from c/hL)
+REstart = 0  # 1: restart from dynamic analysis (set to 0 if stepini==0)
+
+# Calculate stepall
+if step_end == -1:
+    stepall = round(c / clm.hL)
+else:
+    stepall = step_end
+
+# Boundary condition type
+nbcebc = 1  # 0: nodal force, 1: essential boundary condition
+
+# Domain size for global mesh
+lGoutxy = 2 * c
+lGoutz = c
+WidthG = 8.0e-3
+HeightG = 4.0e-3
+
+# Calculate global element size
+hG = cgm.mu_G * clm.hL * cgm.rGL
+
+# Calculate number of control points
+import numpy as np
+nPtsX = int(np.ceil(WidthG / hG))
+nPtsY = nPtsX
+nPtsZ = int(np.ceil(HeightG / hG))
+
+nofix = 1  # Changing boundary conditions: 0=No, 1=Yes
 
 # # J integral
 # Rj0 = 1.5
@@ -37,7 +65,7 @@ inc = 1  # num. of increment (basically 1)
 Alpha_l = 0.
 Beta_l = 2.5004421939026193e-8
 
-OPENMP = 8      # number of openmp thread
+OPENMP = 24      # number of openmp thread
 
 
 TEST_NUMBER_LIST = [4]

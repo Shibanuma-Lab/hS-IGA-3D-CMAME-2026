@@ -1,18 +1,25 @@
-*/__pycache__/*
-generation/inputfiles/*
-application/inputfiles/*
-generation/Newton/*
-application/Newton/*
-logs/*
-*.log
-*.pyc
-*.png
-*/Base/*
-
-# Byte-compiled / optimized / DLL files
+# Python cache
 __pycache__/
+*.pyc
 *.py[cod]
 *$py.class
+
+# Logs and results
+logs/
+*.log
+
+# Debug markdown files
+function.md
+param.md
+
+# Input files (keep structure, ignore generated content)
+circular_crack/inputfiles/step*/
+
+# Results directory
+circular_crack/results/
+
+# PNG outputs
+*.png
 
 # C extensions
 *.so
@@ -67,7 +74,6 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -170,24 +176,15 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-sfem
-open_surface
-sphere_validation
-hex_intersection_test
-merge_ugl
-Makefile
+# SFEM specific
 *.o
-*.log
 *.mod
 *.out
 *.dat
 *.msh
 *.vtu
 *.pvtu
-*[0-9]
 .DS_STORE
-submodule/
-!*.f90
 
-*.txt
+# Credentials
 credentials

@@ -1,3 +1,8 @@
+"""
+Local mesh generation for crack region
+Direct translation from CircularCrackθL[] in function.txt
+"""
+
 import numpy as np
 from const import const_local_mesh as clm, simulation_params as sp
 from utils.logger import logger
@@ -5,170 +10,181 @@ from utils.logger import logger
 
 class LocalMesh:
     """
-    Local mesh generator for crack surface and ligament
-    Creates refined mesh around crack tip
+    Local mesh generator for crack region
+    Based on CircularCrackθL[step] from Mathematica
     """
     
     def __init__(self, step):
         self.step = step
         
         # Local mesh parameters
-        self.hL = clm.hL  # Local element size
-        self.aL = clm.aL  # Number of elements on crack surface
-        self.lL = clm.lL  # Number of elements on ligament
-        self.HL = clm.HL  # Number of elements in thickness
-        
-        # Simulation parameters
-        self.c = sp.c  # Total crack radius
-        self.thi = sp.thi  # Thickness
+        self.hL = clm.hL
+        self.aL = clm.aL
+        self.lL = clm.lL
+        self.HL = clm.HL
+        self.d_theta = clm.d_theta
         
         # Mesh data
-        self.node_l = None
-        self.elem_l = None
-        self.weights_l = None
-        self.index_l = None
+        self.nodeL = None
+        self.elemL = None
         
-        # Crack geometry
-        self.crack_length = None
-        
-        # B-spline degree
-        self.deg = 3
+        # Mesh dimensions
+        self.nLr = None
+        self.nLtheta = None
+        self.nnmL = None
+        self.nemL = None
         
     def make_local_mesh(self):
         """
-        Generate local mesh for crack and ligament region
+        Generate local mesh
+        Translation of CircularCrackθL[step]
         """
-        logger.info("Generating local mesh for crack region")
+        logger.info(f"Generating local mesh for step {self.step}")
         
-        # Calculate current crack length
-        self.crack_length = self.c * self.step / sp.stepall
+        # Helper function: set very small values to zero
+        def ad(x):
+            return 0.0 if abs(x) < 1e-9 * sp.WidthG else x
         
-        # Generate coordinates for crack surface (polar-like mesh)
-        r_coords, theta_coords, z_coords = self._generate_crack_coords()
+        # 1. Calculate mesh dimensions
+        self.nLr = self.aL + self.lL
+        self.nLtheta = round(90 / self.d_theta)
         
-        # Convert to Cartesian coordinates
-        nodes = []
-        node_id = 1
+        # 2. Generate radial coordinates
+        if self.step <= self.aL:
+            # Initial crack: nodes from 0 to nLr
+            nodeLr = self.hL * np.arange(self.nLr + 1)
+        else:
+            # Propagating crack: shift window
+            nodeLr = self.hL * np.arange(self.step - self.aL, self.step + self.lL + 1)
         
-        for z in z_coords:
-            for theta in theta_coords:
-                for r in r_coords:
-                    # Polar to Cartesian conversion
-                    x = r * np.cos(theta)
-                    y = r * np.sin(theta)
-                    nodes.append([node_id, x, y, z])
-                    node_id += 1
+        # 3. Generate through-thickness coordinates
+        nodeLz = self.hL * np.arange(self.HL + 1)
         
-        self.node_l = np.array(nodes)
+        # 4. Generate angular coordinates (0 to 90 degrees)
+        nodeLtheta = np.linspace(0, 0.5 * np.pi, self.nLtheta + 1)
         
-        # Generate elements
-        nr = len(r_coords)
-        nt = len(theta_coords)
-        nz = len(z_coords)
-        self._generate_elements(nr, nt, nz)
+        # 5. Create 3D nodes in cylindrical coordinates
+        nodeL_list = []
+        for z in nodeLz:
+            for theta in nodeLtheta:
+                for r in nodeLr:
+                    x = ad(r * np.cos(theta))
+                    y = ad(r * np.sin(theta))
+                    z_val = ad(z)
+                    nodeL_list.append([x, y, z_val])
         
-        # Generate weights
-        self._generate_weights()
+        self.nodeL = np.array(nodeL_list)
+        self.nnmL = len(self.nodeL)
         
-        # Generate indices
-        self._generate_indices()
+        logger.info(f"Local nodes generated: {self.nnmL} nodes")
+        logger.info(f"  nLr={self.nLr}, nLtheta={self.nLtheta}, HL={self.HL}")
         
-        logger.info(f"Local mesh generated: {len(self.node_l)} nodes, {len(self.elem_l)} elements")
+        # 6. Generate element connectivity
+        self._generate_elements()
+        
+        logger.info(f"Local mesh complete: {self.nemL} elements")
     
-    def _generate_crack_coords(self):
+    def _generate_elements(self):
         """
-        Generate coordinates for crack region in polar-like system
+        Generate 8-node hexahedral elements
+        Translation from Mathematica eL calculation
         """
-        # Radial direction: from crack tip toward center
-        # Fine mesh near crack tip
-        r_coords = []
-        r = 0.0
-        for i in range(self.aL):
-            r_coords.append(r)
-            r += self.hL
+        NLrtheta = (self.nLr + 1) * (self.nLtheta + 1)
         
-        # Extend into ligament
-        for i in range(self.lL):
-            r_coords.append(r)
-            r += self.hL
+        # Initialize element connectivity (8 nodes per hex)
+        eL = [[] for _ in range(8)]
         
-        r_coords = np.array(r_coords)
+        # Node numbering: varies fastest in r, then theta, then z
+        # Element connectivity for 8-node hex:
+        # Bottom face (z):     1-2-3-4
+        # Top face (z+1):      5-6-7-8
         
-        # Angular direction: around crack front (0 to 2π for circular crack)
-        # For circular crack, create angular mesh
-        n_angular = max(8, int(2 * np.pi * self.crack_length / self.hL)) if self.crack_length > 0 else 8
-        theta_coords = np.linspace(0, 2 * np.pi, n_angular + 1)[:-1]  # Remove duplicate at 2π
+        # eL[[1]]: node at (r, theta, z)
+        for k in range(self.HL):
+            for j in range(self.nLtheta):
+                for i in range(self.nLr):
+                    node_id = k * NLrtheta + j * (self.nLr + 1) + i + 1
+                    eL[0].append(node_id)
         
-        # Through-thickness direction
-        z_coords = np.linspace(-self.thi / 2, self.thi / 2, self.HL + 1)
+        # eL[[2]]: node at (r+1, theta, z)
+        for k in range(self.HL):
+            for j in range(self.nLtheta):
+                for i in range(1, self.nLr + 1):
+                    node_id = k * NLrtheta + j * (self.nLr + 1) + i + 1
+                    eL[1].append(node_id)
         
-        return r_coords, theta_coords, z_coords
-    
-    def _generate_elements(self, nr, nt, nz):
-        """
-        Generate element connectivity for local mesh
-        """
-        elements = []
-        elem_id = 1
-        p = self.deg
+        # eL[[3]]: node at (r+1, theta+1, z)
+        for k in range(self.HL):
+            for j in range(1, self.nLtheta + 1):
+                for i in range(1, self.nLr + 1):
+                    node_id = k * NLrtheta + j * (self.nLr + 1) + i + 1
+                    eL[2].append(node_id)
         
-        # Handle periodic boundary in theta direction
-        for k in range(nz - p):
-            for j in range(nt):  # Periodic in theta
-                for i in range(nr - p):
-                    ctrl_pts = []
-                    for kk in range(p + 1):
-                        for jj in range(p + 1):
-                            for ii in range(p + 1):
-                                # Handle periodic wrapping in theta
-                                j_idx = (j + jj) % nt
-                                node_idx = (k + kk) * nr * nt + j_idx * nr + (i + ii) + 1
-                                ctrl_pts.append(node_idx)
-                    
-                    elements.append([elem_id] + ctrl_pts)
-                    elem_id += 1
+        # eL[[4]]: node at (r, theta+1, z)
+        for k in range(self.HL):
+            for j in range(1, self.nLtheta + 1):
+                for i in range(self.nLr):
+                    node_id = k * NLrtheta + j * (self.nLr + 1) + i + 1
+                    eL[3].append(node_id)
         
-        self.elem_l = np.array(elements, dtype=int)
-    
-    def _generate_weights(self):
-        """
-        Generate weights for NURBS
-        For circular geometry, may need special weights
-        """
-        n_nodes = len(self.node_l)
-        self.weights_l = np.ones((n_nodes, 2))
-        self.weights_l[:, 0] = np.arange(1, n_nodes + 1)
+        # eL[[5]]: node at (r, theta, z+1)
+        for k in range(1, self.HL + 1):
+            for j in range(self.nLtheta):
+                for i in range(self.nLr):
+                    node_id = k * NLrtheta + j * (self.nLr + 1) + i + 1
+                    eL[4].append(node_id)
         
-        # For circular arc representation with NURBS, weights might need adjustment
-        # Standard B-spline uses weight = 1.0
-        # For exact circular arc, use weights like cos(theta/2)
-        # Here we use simple B-spline approximation
-    
-    def _generate_indices(self):
-        """
-        Generate control point indices
-        """
-        n_nodes = len(self.node_l)
-        self.index_l = np.arange(1, n_nodes + 1).reshape(-1, 1)
-        self.index_l = np.column_stack([self.index_l, self.index_l])
+        # eL[[6]]: node at (r+1, theta, z+1)
+        for k in range(1, self.HL + 1):
+            for j in range(self.nLtheta):
+                for i in range(1, self.nLr + 1):
+                    node_id = k * NLrtheta + j * (self.nLr + 1) + i + 1
+                    eL[5].append(node_id)
+        
+        # eL[[7]]: node at (r+1, theta+1, z+1)
+        for k in range(1, self.HL + 1):
+            for j in range(1, self.nLtheta + 1):
+                for i in range(1, self.nLr + 1):
+                    node_id = k * NLrtheta + j * (self.nLr + 1) + i + 1
+                    eL[6].append(node_id)
+        
+        # eL[[8]]: node at (r, theta+1, z+1)
+        for k in range(1, self.HL + 1):
+            for j in range(1, self.nLtheta + 1):
+                for i in range(self.nLr):
+                    node_id = k * NLrtheta + j * (self.nLr + 1) + i + 1
+                    eL[7].append(node_id)
+        
+        # Transpose to get elements (each row is one element)
+        self.elemL = np.array(eL).T
+        self.nemL = len(self.elemL)
     
     def generate(self):
         """
-        Write local mesh data to files
+        Write local mesh files
         """
         logger.info("Writing local mesh files")
         
-        # Write node file
-        np.savetxt('node.l.dat', self.node_l, fmt=['%d', '%.15e', '%.15e', '%.15e'])
+        # Format number with 15 significant digits
+        def sig15(x):
+            if x == 0.0:
+                return "0.0"
+            return f"{x:.15e}"
         
-        # Write element file
-        fmt_elem = ['%d'] + ['%d'] * (self.elem_l.shape[1] - 1)
-        np.savetxt('elem.l.dat', self.elem_l, fmt=fmt_elem)
+        # 1. Write elem.l.dat
+        with open('elem.l.dat', 'w') as f:
+            f.write(f"{self.nemL} 8\n")
+            for i, elem in enumerate(self.elemL):
+                f.write(f"{i+1}")
+                for node in elem:
+                    f.write(f" {node}")
+                f.write("\n")
         
-        # Write weights file
-        np.savetxt('weights.l.dat', self.weights_l, fmt=['%d', '%.15e'])
-        
-        # Write index file (if needed by solver)
-        # np.savetxt('index.l.dat', self.index_l, fmt=['%d', '%d'])
+        # 2. Write node.l.dat
+        with open('node.l.dat', 'w') as f:
+            f.write(f"{self.nnmL}\n")
+            for i, node in enumerate(self.nodeL):
+                f.write(f"{i+1} {sig15(node[0])} {sig15(node[1])} {sig15(node[2])}\n")
         
         logger.info("Local mesh files written successfully")
+        logger.info(f"nnmG={sp.nPtsX * sp.nPtsY * sp.nPtsZ}, nnmL={self.nnmL}, ndf={3 * (sp.nPtsX * sp.nPtsY * sp.nPtsZ + self.nnmL)}")
