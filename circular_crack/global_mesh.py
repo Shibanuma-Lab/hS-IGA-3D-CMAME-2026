@@ -284,11 +284,7 @@ class GlobalMesh:
         """
         logger.info("Writing global mesh files")
         
-        # Format number with 15 significant digits
-        def sig15(x):
-            if x == 0.0:
-                return "0.0"
-            return f"{x:.15e}"
+        from utils.format_output import format_real
         
         # 1. Write elem.g.dat
         nelem = len(self.elemG)
@@ -312,13 +308,13 @@ class GlobalMesh:
         with open('weights.g.dat', 'w') as f:
             f.write(f"{len(self.weights)}\n")
             for w in self.weights:
-                f.write(f"{sig15(w)}\n")
+                f.write(f"{format_real(w)}\n")
         
         # 4. Write node.g.dat
         with open('node.g.dat', 'w') as f:
             f.write(f"{len(self.nodeG)}\n")
             for i, node in enumerate(self.nodeG):
-                f.write(f"{i+1} {sig15(node[0])} {sig15(node[1])} {sig15(node[2])}\n")
+                f.write(f"{i+1}\t{format_real(node[0])}\t{format_real(node[1])}\t{format_real(node[2])}\n")
         
         # 5. Write visualization files
         with open('elem.v.dat', 'w') as f:
@@ -332,6 +328,6 @@ class GlobalMesh:
         with open('node.v.dat', 'w') as f:
             f.write(f"{len(self.node_visual)}\n")
             for i, node in enumerate(self.node_visual):
-                f.write(f"{i+1} {sig15(node[0])} {sig15(node[1])} {sig15(node[2])}\n")
+                f.write(f"{i+1}\t{format_real(node[0])}\t{format_real(node[1])}\t{format_real(node[2])}\n")
         
         logger.info("Global mesh files written successfully")

@@ -173,11 +173,10 @@ class Boundary:
         bcLfix = list(set(bcLr0 + bcLr1 + bcLz1))
         
         # Filter symmetry BCs to remove fixed boundaries
+        # Mathematica: bcLx0 = Complement[bcLx0, bcLfix];
         bcLx0 = [n for n in bcLx0 if n not in bcLfix]
         bcLy0 = [n for n in bcLy0 if n not in bcLfix]
-        # bcLz0 should exclude bcLr1 and bcLz1 (but not bcLr0)
-        bcLz0 = [n for n in bcLz0 if n not in set(bcLr1 + bcLz1)]
-        # The overlapping nodes will have constraints for specific DOFs
+        bcLz0 = [n for n in bcLz0 if n not in bcLfix]
         
         # Assemble local BCs
         if step == 0:
@@ -336,7 +335,8 @@ class Boundary:
                 bcGy1.append(base - i)
         
         # bcGz1: z = max (Mathematica: (nPtsX)^2*(nPtsZ) - Range[(nPtsX)^2] + 1)
-        bcGz1 = [nPtsX * nPtsX * nPtsZ - m + 1 for m in range(nPtsX * nPtsX)]
+        # Note: Mathematica Range[n] = [1, 2, ..., n], so we use range(1, n+1)
+        bcGz1 = [nPtsX * nPtsX * nPtsZ - m + 1 for m in range(1, nPtsX * nPtsX + 1)]
         
         bcGs = sorted(list(set(bcGx1 + bcGy1 + bcGz1)))
         
@@ -438,10 +438,18 @@ class Boundary:
             for i in range(nLr + 1):
                 bcLy0.append(node_index_local(i, 0, k))
         
+        # bcLz0: symmetry in z-direction (z = 0)
+        # Mathematica: Range[step + 1, nLr + 1] means i starts from step (in 0-based)
         bcLz0 = []
         if step <= clm.aL:
+            i_start = step  # For step=0: i>=0, step=2: i>=2
             for j in range(nLtheta + 1):
-                for i in range(nLr + 1):
+                for i in range(i_start, nLr + 1):
+                    bcLz0.append(node_index_local(i, j, 0))
+        else:
+            i_start = clm.aL
+            for j in range(nLtheta + 1):
+                for i in range(i_start, nLr + 1):
                     bcLz0.append(node_index_local(i, j, 0))
         
         bcLr0 = []
@@ -461,11 +469,10 @@ class Boundary:
         
         bcLfix = list(set(bcLr0 + bcLr1 + bcLz1))
         
-        # Filter symmetry BCs
+        # Filter symmetry BCs (Mathematica: bcLx0 = Complement[bcLx0, bcLfix])
         bcLx0 = [n for n in bcLx0 if n not in bcLfix]
         bcLy0 = [n for n in bcLy0 if n not in bcLfix]
-        # bcLz0 excludes bcLr1 and bcLz1
-        bcLz0 = [n for n in bcLz0 if n not in set(bcLr1 + bcLz1)]
+        bcLz0 = [n for n in bcLz0 if n not in bcLfix]
         
         if step == 0:
             # bcLr02: bottom side of inner radius (k = 0)
@@ -564,11 +571,7 @@ class Boundary:
         """
         logger.info("Writing boundary condition files")
         
-        # Format number with 15 significant digits
-        def sig15(x):
-            if x == 0.0:
-                return "0.0"
-            return f"{x:.15e}"
+        from utils.format_output import format_bc_line, format_real
         
         # Write bc.g.dat
         with open('bc.g.dat', 'w') as f:
@@ -576,7 +579,7 @@ class Boundary:
                 if len(bc) == 1:
                     f.write(f"{bc[0]}\n")
                 else:
-                    f.write(f"{bc[0]} {bc[1]} {sig15(bc[2])}\n")
+                    f.write(format_bc_line(bc[0], bc[1], bc[2]) + "\n")
         
         # Write bc.l.dat
         with open('bc.l.dat', 'w') as f:
@@ -584,7 +587,7 @@ class Boundary:
                 if len(bc) == 1:
                     f.write(f"{bc[0]}\n")
                 else:
-                    f.write(f"{bc[0]} {bc[1]} {sig15(bc[2])}\n")
+                    f.write(format_bc_line(bc[0], bc[1], bc[2]) + "\n")
         
         # Write load.dat
         with open('load.dat', 'w') as f:
@@ -592,6 +595,6 @@ class Boundary:
                 if len(load) == 1:
                     f.write(f"{load[0]}\n")
                 else:
-                    f.write(f"{load[0]} {load[1]} {sig15(load[2])}\n")
+                    f.write(f"{load[0]}\t{load[1]}\t{format_real(load[2])}\n")
         
         logger.info("Boundary condition files written successfully")

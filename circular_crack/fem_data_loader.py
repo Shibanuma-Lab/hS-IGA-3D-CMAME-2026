@@ -134,19 +134,19 @@ class FEMDataLoader:
     
     def interpolate_2d_to_3d(self, values_2d, nodeG_3d):
         """
-        Interpolate 2D FEM values to 3D IGA nodes with cylindrical coordinate transformation
+        Interpolate 2D FEM values to 3D IGA nodes using exact Mathematica algorithm
+        
+        This implements the exact same interpolation as Mathematica's boundaryebcG:
+        1. For each IGA node, find containing FEM element using bounding box search
+        2. Solve for parametric coordinates (ξ, η) within element
+        3. Use bilinear shape functions N1, N2, N3, N4 to interpolate displacement
+        4. Transform from cylindrical (u_r, u_z) to Cartesian (u_x, u_y, u_z)
         
         FEM data is in cylindrical coordinates (r, z):
         - nodeGFEM[:, 0] = r (radial position)
         - nodeGFEM[:, 1] = z (axial position)
         - values_2d[:, 0] = u_r (radial displacement)
         - values_2d[:, 1] = u_z (axial displacement)
-        
-        Transformation to 3D Cartesian:
-        - For each 3D node at (x, y, z):
-          1. Convert to cylindrical: r = sqrt(x^2 + y^2), theta = atan2(y, x)
-          2. Interpolate (u_r, u_z) at (r, z) from FEM data
-          3. Convert to Cartesian: u_x = u_r * cos(theta), u_y = u_r * sin(theta), u_z = u_z
         
         Args:
             values_2d: (n_fem_nodes, 2) array - [u_r, u_z] in cylindrical coordinates
@@ -155,36 +155,205 @@ class FEMDataLoader:
         Returns:
             (n_iga_nodes, 3) array - [u_x, u_y, u_z] in Cartesian coordinates
         """
-        from scipy.interpolate import LinearNDInterpolator
+        from scipy.optimize import fsolve
         
-        # Create interpolators for radial and axial components
-        # FEM nodes are in (r, z) coordinates
-        interp_ur = LinearNDInterpolator(self.nodeGFEM, values_2d[:, 0])  # u_r
-        interp_uz = LinearNDInterpolator(self.nodeGFEM, values_2d[:, 1])  # u_z
+        # Bilinear shape functions (matches Mathematica exactly)
+        def N1(xi, eta):
+            return 0.25 * (1.0 - xi) * (1.0 - eta)
         
-        # Convert 3D IGA nodes to cylindrical coordinates
-        x = nodeG_3d[:, 0]
-        y = nodeG_3d[:, 1]
-        z = nodeG_3d[:, 2]
+        def N2(xi, eta):
+            return 0.25 * (1.0 + xi) * (1.0 - eta)
         
-        r = np.sqrt(x**2 + y**2)
-        theta = np.arctan2(y, x)
+        def N3(xi, eta):
+            return 0.25 * (1.0 + xi) * (1.0 + eta)
         
-        # Create (r, z) points for interpolation
-        rz_points = np.column_stack([r, z])
+        def N4(xi, eta):
+            return 0.25 * (1.0 - xi) * (1.0 + eta)
         
-        # Interpolate u_r and u_z
-        u_r = interp_ur(rz_points)
-        u_z = interp_uz(rz_points)
+        # Pre-compute element bounding boxes for faster search
+        neGa = len(self.elemGFEM)
+        elGaposGa = []
+        rmaxGa = np.zeros(neGa)
+        rminGa = np.zeros(neGa)
+        zmaxGa = np.zeros(neGa)
+        zminGa = np.zeros(neGa)
         
-        # Replace NaN with 0 (points outside convex hull)
-        u_r = np.nan_to_num(u_r)
-        u_z = np.nan_to_num(u_z)
+        for eG in range(neGa):
+            # Get element node positions (convert from 1-based to 0-based indexing)
+            elem_node_indices = self.elemGFEM[eG] - 1
+            elem_nodes = self.nodeGFEM[elem_node_indices]
+            elGaposGa.append(elem_nodes)
+            rmaxGa[eG] = np.max(elem_nodes[:, 0])
+            rminGa[eG] = np.min(elem_nodes[:, 0])
+            zmaxGa[eG] = np.max(elem_nodes[:, 1])
+            zminGa[eG] = np.min(elem_nodes[:, 1])
         
-        # Convert cylindrical displacements to Cartesian coordinates
+        def solve_xi_eta_Ga(eGa, rz_point):
+            """
+            Solve for parametric coordinates (ξ, η) given (r, z) point in element
+            Matches Mathematica's solve\[Xi]\[Eta]Ga function
+            """
+            xy = elGaposGa[eGa]
+            r_target, z_target = rz_point
+            
+            # Check if element is aligned rectangular (optimization from Mathematica)
+            if (np.abs(xy[0, 0] - xy[3, 0]) < 1e-10 and 
+                np.abs(xy[1, 0] - xy[2, 0]) < 1e-10 and
+                np.abs(xy[0, 1] - xy[1, 1]) < 1e-10 and
+                np.abs(xy[2, 1] - xy[3, 1]) < 1e-10):
+                # Rectangular element aligned with axes
+                r_center = 0.5 * (xy[2, 0] + xy[0, 0])
+                z_center = 0.5 * (xy[2, 1] + xy[0, 1])
+                r_half = 0.5 * (xy[2, 0] - xy[0, 0])
+                z_half = 0.5 * (xy[2, 1] - xy[0, 1])
+                
+                # Avoid division by zero
+                if abs(r_half) < 1e-15:
+                    xi = 0.0
+                else:
+                    xi = (r_target - r_center) / r_half
+                
+                if abs(z_half) < 1e-15:
+                    eta = 0.0
+                else:
+                    eta = (z_target - z_center) / z_half
+                
+                return xi, eta
+            else:
+                # General case: solve nonlinear system using Newton-Raphson
+                def residual(params):
+                    xi, eta = params
+                    r_interp = (N1(xi, eta) * xy[0, 0] + 
+                               N2(xi, eta) * xy[1, 0] + 
+                               N3(xi, eta) * xy[2, 0] + 
+                               N4(xi, eta) * xy[3, 0])
+                    z_interp = (N1(xi, eta) * xy[0, 1] + 
+                               N2(xi, eta) * xy[1, 1] + 
+                               N3(xi, eta) * xy[2, 1] + 
+                               N4(xi, eta) * xy[3, 1])
+                    return [r_interp - r_target, z_interp - z_target]
+                
+                # Try multiple initial guesses if first one fails
+                initial_guesses = [
+                    [0.0, 0.0],      # Center
+                    [-0.5, -0.5],    # Lower-left quadrant
+                    [0.5, -0.5],     # Lower-right quadrant
+                    [-0.5, 0.5],     # Upper-left quadrant
+                    [0.5, 0.5],      # Upper-right quadrant
+                ]
+                
+                for guess in initial_guesses:
+                    try:
+                        solution = fsolve(residual, guess, full_output=True)
+                        xi, eta = solution[0]
+                        info = solution[1]
+                        
+                        # Check if solution converged and is valid
+                        if info['fvec'][0]**2 + info['fvec'][1]**2 < 1e-10:
+                            return xi, eta
+                    except:
+                        continue
+                
+                # If all guesses fail, return center (0, 0)
+                return 0.0, 0.0
+        
+        def get_xi_eta_GaeG(node_xyz):
+            """
+            Find containing element and parametric coordinates for 3D node
+            Matches Mathematica's get\[Xi]\[Eta]GaeG function
+            """
+            r = np.sqrt(node_xyz[0]**2 + node_xyz[1]**2)
+            z = node_xyz[2]
+            
+            # Find candidate elements using bounding box (matches Mathematica's eGaabb)
+            eGaabb = []
+            for eG in range(neGa):
+                if (rmaxGa[eG] >= r and rminGa[eG] <= r and
+                    zmaxGa[eG] >= z and zminGa[eG] <= z):
+                    eGaabb.append(eG)
+            
+            if len(eGaabb) == 0:
+                return None, None
+            
+            # Try each candidate element
+            best_eGa = None
+            best_xi_eta = None
+            best_dist = float('inf')
+            
+            for eGa in eGaabb:
+                xi, eta = solve_xi_eta_Ga(eGa, [r, z])
+                
+                # Calculate distance from valid range [-1, 1]
+                dist = 0.0
+                if xi < -1.0:
+                    dist += (-1.0 - xi)**2
+                elif xi > 1.0:
+                    dist += (xi - 1.0)**2
+                if eta < -1.0:
+                    dist += (-1.0 - eta)**2
+                elif eta > 1.0:
+                    dist += (eta - 1.0)**2
+                
+                # Accept if within tolerance (allow small overshoot for boundary nodes)
+                tolerance = 0.01  # Allow 1% overshoot for numerical errors
+                if dist < tolerance**2:
+                    if dist < best_dist:
+                        best_eGa = eGa
+                        best_xi_eta = (xi, eta)
+                        best_dist = dist
+                        
+                        # Perfect match - return immediately
+                        if dist == 0.0:
+                            return eGa, (xi, eta)
+            
+            # Return best match even if slightly outside
+            if best_eGa is not None:
+                return best_eGa, best_xi_eta
+            
+            return None, None
+        
+        def disinter(eG, xi_eta, disp_data):
+            """
+            Interpolate displacement at parametric coordinates within element
+            Matches Mathematica's disinter function exactly
+            """
+            xi, eta = xi_eta
+            nn = [N1(xi, eta), N2(xi, eta), N3(xi, eta), N4(xi, eta)]
+            
+            # Get displacement at element nodes (convert from 1-based to 0-based)
+            elem_node_indices = self.elemGFEM[eG] - 1
+            disGn = disp_data[elem_node_indices]
+            
+            # Interpolate u_r and u_z
+            u_r = sum(nn[i] * disGn[i, 0] for i in range(4))
+            u_z = sum(nn[i] * disGn[i, 1] for i in range(4))
+            
+            return u_r, u_z
+        
+        # Interpolate for each IGA node
         values_3d = np.zeros((len(nodeG_3d), 3))
-        values_3d[:, 0] = u_r * np.cos(theta)  # u_x = u_r * cos(theta)
-        values_3d[:, 1] = u_r * np.sin(theta)  # u_y = u_r * sin(theta)
-        values_3d[:, 2] = u_z                   # u_z = u_z
+        
+        for i, node_xyz in enumerate(nodeG_3d):
+            # Find containing element and parametric coordinates
+            eG, xi_eta = get_xi_eta_GaeG(node_xyz)
+            
+            if eG is None:
+                # Point not found in any element (outside FEM domain)
+                values_3d[i] = [0.0, 0.0, 0.0]
+                continue
+            
+            # Interpolate displacement in cylindrical coordinates
+            u_r, u_z = disinter(eG, xi_eta, values_2d)
+            
+            # Transform to Cartesian coordinates (matches Mathematica's getbc function)
+            x, y = node_xyz[0], node_xyz[1]
+            if x == 0.0:
+                theta = np.pi / 2.0
+            else:
+                theta = np.arctan(y / x)
+            
+            values_3d[i, 0] = u_r * np.cos(theta)  # u_x
+            values_3d[i, 1] = u_r * np.sin(theta)  # u_y
+            values_3d[i, 2] = u_z                   # u_z
         
         return values_3d

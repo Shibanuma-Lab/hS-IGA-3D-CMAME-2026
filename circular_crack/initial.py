@@ -163,18 +163,13 @@ def _write_initial_files(disG, velG, acceG, disL, velL, acceL):
             Line 2+: nodeID \t x \t y \t z (15 significant digits)
     """
     
-    def sig15(x):
-        """Format number with 15 significant digits in scientific notation"""
-        if abs(x) < 1e-100:
-            return "0.000000000000000E+00"
-        else:
-            return f"{x:.14e}".upper().replace('E+', 'E+').replace('E-', 'E-')
+    from utils.format_output import format_real
     
     def write_node_data(filename, data):
         """Write node data in format: nodeID x y z"""
         lines = [str(len(data))]
         for i, (x, y, z) in enumerate(data, start=1):
-            line = f"{i}\t{sig15(x)}\t{sig15(y)}\t{sig15(z)}"
+            line = f"{i}\t{format_real(x)}\t{format_real(y)}\t{format_real(z)}"
             lines.append(line)
         with open(filename, 'w') as f:
             f.write('\n'.join(lines))

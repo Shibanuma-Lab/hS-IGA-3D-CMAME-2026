@@ -12,7 +12,7 @@ V = 1000.0  # Velocity [m/s]
 
 # Step control
 step_start = 0  # stepini
-step_end = 10  # stepend (-1 means calculate from c/hL)
+step_end = 101  # stepend (-1 means calculate from c/hL)
 REstart = 0  # 1: restart from dynamic analysis (set to 0 if stepini==0)
 
 # Calculate stepall
@@ -55,15 +55,19 @@ Gamma = 0.5
 # integral point
 ngp = 2
 
-nrefLlist = 8  # href=2^nref
+nrefLlist = 1  # href=2^nref
 inc = 1  # num. of increment (basically 1)
 
 # Nu = 0.35   # Poisson's ratio
 # ee = 3.2e9  # Young's modulus [Pa]
 # Rho = 1170. # density [m/s^2]
 
+# Rayleigh damping - mass coefficient
 Alpha_l = 0.
-Beta_l = 2.5004421939026193e-8
+
+# Beta_l (Rk) is calculated dynamically in input_generator.py using:
+# Beta_l = 2.57 * h * sqrt(rho/E)
+# where h = hG (global) or hL (local) depending on islocal flag
 
 OPENMP = 24      # number of openmp thread
 

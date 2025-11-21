@@ -165,11 +165,7 @@ class LocalMesh:
         """
         logger.info("Writing local mesh files")
         
-        # Format number with 15 significant digits
-        def sig15(x):
-            if x == 0.0:
-                return "0.0"
-            return f"{x:.15e}"
+        from utils.format_output import format_real
         
         # 1. Write elem.l.dat
         with open('elem.l.dat', 'w') as f:
@@ -184,7 +180,7 @@ class LocalMesh:
         with open('node.l.dat', 'w') as f:
             f.write(f"{self.nnmL}\n")
             for i, node in enumerate(self.nodeL):
-                f.write(f"{i+1} {sig15(node[0])} {sig15(node[1])} {sig15(node[2])}\n")
+                f.write(f"{i+1}\t{format_real(node[0])}\t{format_real(node[1])}\t{format_real(node[2])}\n")
         
         logger.info("Local mesh files written successfully")
         logger.info(f"nnmG={sp.nPtsX * sp.nPtsY * sp.nPtsZ}, nnmL={self.nnmL}, ndf={3 * (sp.nPtsX * sp.nPtsY * sp.nPtsZ + self.nnmL)}")

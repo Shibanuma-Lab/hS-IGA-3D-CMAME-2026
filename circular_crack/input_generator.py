@@ -43,8 +43,14 @@ def generate(step, REstart):
     beta = sp.Beta
     
     # Rayleigh damping
-    Rm = sp.Alpha_l  # Mass damping
-    Rk = sp.Beta_l   # Stiffness damping
+    Rm = sp.Alpha_l  # Mass damping coefficient (alpha)
+    
+    # Calculate Rk (Beta_l) using formula: β_l = 2.57 * h * sqrt(ρ/E)
+    # islocal: 0=use hG (global mesh), 1=use hL (local mesh)
+    # For S-IGA with local refinement, we use hL
+    islocal = 1
+    h = sp.hG if islocal == 0 else clm.hL
+    Rk = 2.57 * h * np.sqrt(density / young)  # Stiffness damping coefficient (beta)
     
     # Local mesh parameters
     ngp = sp.ngp  # Integration points
