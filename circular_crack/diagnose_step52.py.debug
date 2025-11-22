@@ -1,0 +1,165 @@
+"""
+Diagnostic script to check step 52 initialization
+"""
+import numpy as np
+import os
+from const import const_local_mesh as clm
+
+def main():
+    print("="*70)
+    print("STEP 52 INITIALIZATION DIAGNOSTIC")
+    print("="*70)
+    
+    # Constants
+    aL = clm.aL
+    lL = clm.lL
+    nLr = aL + lL
+    
+    print(f"\nConstants:")
+    print(f"  aL = {aL}")
+    print(f"  lL = {lL}")
+    print(f"  nLr = aL + lL = {nLr}")
+    print(f"  nLr + 1 = {nLr + 1}")
+    print(f"\nStep 52 > aL = {52 > aL} → Should reset r=rmax nodes")
+    
+    # Load step 51 results
+    step51_log = "results/step00051/log"
+    files_to_check = {
+        'disL': os.path.join(step51_log, 'u.l.dat'),
+        'velL': os.path.join(step51_log, 'v.l.dat'),
+        'acceL': os.path.join(step51_log, 'a.l.dat'),
+    }
+    
+    print(f"\n{'='*70}")
+    print("Loading Step 51 results:")
+    for name, filepath in files_to_check.items():
+        if os.path.exists(filepath):
+            data = np.loadtxt(filepath, skiprows=1)
+            values = data[:, 1:4]
+            print(f"  ✓ {name}: shape={values.shape}")
+        else:
+            print(f"  ✗ {name}: NOT FOUND")
+            return
+    
+    # Load the actual data
+    disL_data = np.loadtxt(files_to_check['disL'], skiprows=1)
+    disL = disL_data[:, 1:4]
+    velL_data = np.loadtxt(files_to_check['velL'], skiprows=1)
+    velL = velL_data[:, 1:4]
+    acceL_data = np.loadtxt(files_to_check['acceL'], skiprows=1)
+    acceL = acceL_data[:, 1:4]
+    
+    nnmL = len(disL)
+    print(f"\nTotal local nodes: {nnmL}")
+    
+    # Apply Python's current logic
+    print(f"\n{'='*70}")
+    print("Applying Python logic for step > aL:")
+    print("  For each node i (0-indexed):")
+    print("    If (i+1) % (nLr+1) == 0: set to [0,0,0]")
+    print("    Else: keep original value")
+    
+    disiniL = np.array([disL[i] if (i+1) % (nLr + 1) != 0 else np.array([0., 0., 0.]) 
+                       for i in range(nnmL)])
+    veliniL = np.array([velL[i] if (i+1) % (nLr + 1) != 0 else np.array([0., 0., 0.]) 
+                       for i in range(nnmL)])
+    acceiniL = np.array([acceL[i] if (i+1) % (nLr + 1) != 0 else np.array([0., 0., 0.]) 
+                        for i in range(nnmL)])
+    
+    # Count how many nodes got zeroed
+    n_zeroed = sum(1 for i in range(nnmL) if (i+1) % (nLr + 1) == 0)
+    print(f"\nNodes zeroed: {n_zeroed}")
+    print(f"Zeroed node IDs (1-indexed): {[i+1 for i in range(min(10*(nLr+1), nnmL)) if (i+1) % (nLr + 1) == 0][:10]}...")
+    
+    # Load Python-generated init files
+    print(f"\n{'='*70}")
+    print("Loading Python-generated init files (step 52):")
+    
+    step52_dir = "inputfiles/step00052"
+    init_files = {
+        'init.u.l.dat': os.path.join(step52_dir, 'init.u.l.dat'),
+        'init.v.l.dat': os.path.join(step52_dir, 'init.v.l.dat'),
+        'init.a.l.dat': os.path.join(step52_dir, 'init.a.l.dat'),
+    }
+    
+    for name, filepath in init_files.items():
+        if os.path.exists(filepath):
+            data = np.loadtxt(filepath, skiprows=1)
+            init_values = data[:, 1:4]
+            print(f"  ✓ {name}: shape={init_values.shape}")
+        else:
+            print(f"  ✗ {name}: NOT FOUND")
+    
+    # Compare with expected
+    print(f"\n{'='*70}")
+    print("Comparing Python-generated vs Expected:")
+    
+    init_disL_data = np.loadtxt(init_files['init.u.l.dat'], skiprows=1)
+    init_disL = init_disL_data[:, 1:4]
+    
+    init_velL_data = np.loadtxt(init_files['init.v.l.dat'], skiprows=1)
+    init_velL = init_velL_data[:, 1:4]
+    
+    init_acceL_data = np.loadtxt(init_files['init.a.l.dat'], skiprows=1)
+    init_acceL = init_acceL_data[:, 1:4]
+    
+    # Check differences
+    diff_dis = np.max(np.abs(init_disL - disiniL))
+    diff_vel = np.max(np.abs(init_velL - veliniL))
+    diff_acc = np.max(np.abs(init_acceL - acceiniL))
+    
+    print(f"\n  Displacement: max_diff = {diff_dis:.2e}")
+    print(f"  Velocity:     max_diff = {diff_vel:.2e}")
+    print(f"  Acceleration: max_diff = {diff_acc:.2e}")
+    
+    if diff_dis < 1e-15 and diff_vel < 1e-15 and diff_acc < 1e-15:
+        print("\n  ✓ ALL MATCH! Python logic is correct.")
+    else:
+        print("\n  ✗ MISMATCH DETECTED!")
+        
+        # Find mismatched nodes
+        for i in range(min(100, nnmL)):
+            if not np.allclose(init_disL[i], disiniL[i], atol=1e-15):
+                print(f"\n  Mismatch at node {i+1}:")
+                print(f"    Expected:  {disiniL[i]}")
+                print(f"    Generated: {init_disL[i]}")
+                break
+    
+    # Check specific nodes that should be zero
+    print(f"\n{'='*70}")
+    print("Verifying zeroed nodes:")
+    
+    zero_node_ids = [67, 134, 201, 268, 335]
+    for node_id in zero_node_ids:
+        idx = node_id - 1
+        if idx < len(init_disL):
+            is_zero = np.allclose(init_disL[idx], [0, 0, 0], atol=1e-15)
+            marker = "✓" if is_zero else "✗"
+            print(f"  {marker} Node {node_id}: {init_disL[idx]}")
+    
+    # Check specific nodes that should NOT be zero
+    print(f"\nVerifying non-zero nodes:")
+    nonzero_node_ids = [66, 68, 133, 135]
+    for node_id in nonzero_node_ids:
+        idx = node_id - 1
+        if idx < len(init_disL):
+            is_zero = np.allclose(init_disL[idx], [0, 0, 0], atol=1e-15)
+            marker = "✗" if is_zero else "✓"
+            print(f"  {marker} Node {node_id}: {init_disL[idx][:1]}... (should be non-zero)")
+    
+    print(f"\n{'='*70}")
+    print("CONCLUSION:")
+    print("="*70)
+    if diff_dis < 1e-15 and diff_vel < 1e-15 and diff_acc < 1e-15:
+        print("Python initial.py is working correctly!")
+        print("\nIf step 52 results are still wrong, the issue is likely in:")
+        print("  1. Boundary conditions (bc.g.dat, bc.l.dat)")
+        print("  2. Load conditions (load.dat)")
+        print("  3. Solver parameters")
+        print("  4. Or some other input file, not initial conditions")
+    else:
+        print("There IS an issue with initial.py!")
+        print("Further investigation needed.")
+
+if __name__ == "__main__":
+    main()

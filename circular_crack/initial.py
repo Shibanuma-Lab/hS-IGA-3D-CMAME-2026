@@ -49,15 +49,25 @@ def initial(step, local_mesh, global_mesh):
         veliniG = velG
         acceiniG = acceG
         
-        # For local mesh: nodes where Mod[#, nLr+1] == 0 (r = rmax) set to zero
+        # Mathematica: Map[If[Mod[#, nLr+1]==0, {0,0,0}, disL[[#+1]]] &, Range[nnmL]]
+        # Range[nnmL] generates [1, 2, ..., nnmL] (1-indexed)
+        # For # in [1, 2, ..., nnmL]:
+        #   If Mod[#, 67] == 0 (when # = 67, 134, 201, ...): output {0,0,0}
+        #   Else: output disL[[#+1]] (access (#+1)-th element in Mathematica)
+        #
+        # Translation to Python (0-indexed):
+        # For i in [0, 1, ..., nnmL-1]:
+        #   Mathematica's # = i+1 (converts 0-indexed to 1-indexed)
+        #   If (i+1) % 67 == 0 (when i = 66, 133, 200, ...): output {0,0,0}
+        #   Else: output disL[i+1] (Mathematica's [[#+1]] = [[i+2]] = Python's [i+1])
         nLr = clm.aL + clm.lL
         nnmL = len(local_mesh.nodeL)
         
-        disiniL = np.array([disL[i] if (i+1) % (nLr + 1) != 0 else np.array([0., 0., 0.]) 
+        disiniL = np.array([np.array([0., 0., 0.]) if (i+1) % (nLr + 1) == 0 else disL[i+1]
                            for i in range(nnmL)])
-        veliniL = np.array([velL[i] if (i+1) % (nLr + 1) != 0 else np.array([0., 0., 0.]) 
+        veliniL = np.array([np.array([0., 0., 0.]) if (i+1) % (nLr + 1) == 0 else velL[i+1]
                            for i in range(nnmL)])
-        acceiniL = np.array([acceL[i] if (i+1) % (nLr + 1) != 0 else np.array([0., 0., 0.]) 
+        acceiniL = np.array([np.array([0., 0., 0.]) if (i+1) % (nLr + 1) == 0 else acceL[i+1]
                             for i in range(nnmL)])
         logger.info(f"Step {step} > aL: Reset r=rmax nodes to zero in local mesh")
     

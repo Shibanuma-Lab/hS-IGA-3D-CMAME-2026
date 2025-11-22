@@ -21,6 +21,11 @@ circular_crack/results/
 # PNG outputs
 *.png
 
+#files for debugging
+*.xlsx
+.nb
+.debug
+
 # C extensions
 *.so
 
