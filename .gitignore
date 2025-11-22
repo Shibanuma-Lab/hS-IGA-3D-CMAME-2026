@@ -23,8 +23,8 @@ circular_crack/results/
 
 #files for debugging
 *.xlsx
-.nb
-.debug
+*.nb
+*.debug
 
 # C extensions
 *.so
