@@ -8,6 +8,9 @@ __pycache__/
 logs/
 *.log
 
+#useless ms and debug files
+circular_crack/useless md and debug files/
+
 # Debug markdown files
 function.md
 param.md
@@ -25,6 +28,10 @@ circular_crack/results/
 *.xlsx
 *.nb
 *.debug
+
+# output csv files
+*.csv
+*.xlsx
 
 # C extensions
 *.so

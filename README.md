@@ -2,70 +2,40 @@
 
 ## Overview
 
-This repository implements a **Scaled Isogeometric Analysis (S-IGA)** framework for simulating three-dimensional circular crack propagation in elastic solids under linear mechanical loading. The method combines the advantages of NURBS-based Isogeometric Analysis (IGA) with local mesh refinement strategies to accurately capture crack-tip stress singularities and crack front behavior.
+This repository implements a **S-version Isogeometric Analysis (S-IGA)** framework for simulating three-dimensional circular crack propagation in elastic solids. The method combines the advantages of NURBS-based Isogeometric Analysis (IGA) with local mesh refinement strategies to accurately capture crack-tip stress singularities and crack front behavior.
 
 The implementation is a Python-based mesh generation and pre-processing framework coupled with a Fortran-based finite element solver (`sfem_linear`).
-
-## Features
-
-- **NURBS-Based Global Mesh**: Leverages B-spline basis functions for accurate geometric representation and higher-order continuity
-- **Local Mesh Refinement**: Adaptive mesh refinement around crack tips using cylindrical coordinate systems
-- **Crack Propagation Simulation**: Step-by-step simulation of circular crack growth with configurable crack velocity
-- **Essential and Natural Boundary Conditions**: Support for both displacement-controlled (essential) and force-controlled (natural) boundary conditions
-- **FEM Data Integration**: Interpolation of boundary conditions from pre-computed FEM solutions
-- **Parallel Computing Support**: OpenMP-enabled solver for efficient large-scale computations
 
 ## Repository Structure
 
 ```
 S-IGA-circular-crack-in-3D-solid-linear/
 ├── circular_crack/              # Main Python package
-│   ├── main.py                  # Entry point for mesh generation and simulation
+│   ├── main.py                  # Entry point with command-line interface
 │   ├── global_mesh.py           # NURBS-based global mesh generation
 │   ├── local_mesh.py            # Local mesh refinement around crack
 │   ├── boundary.py              # Boundary condition generation (EBC/NBC)
 │   ├── initial.py               # Initial condition setup for restart
 │   ├── input_generator.py       # Input file generation for solver
-│   ├── fem_data_loader.py       # FEM data loading and interpolation
+│   ├── jintegral.py             # J-integral and stress intensity factor calculation
 │   ├── const/                   # Configuration parameters
 │   │   ├── simulation_params.py # Simulation control parameters
-│   │   ├── material_property.py # Material properties
+│   │   ├── material_property.py # Material properties (E, ν, ρ, etc.)
 │   │   ├── const_global_mesh.py # Global mesh parameters
-│   │   └── const_local_mesh.py  # Local mesh parameters
+│   │   ├── const_local_mesh.py  # Local mesh parameters
+│   │   └── const_jintegral.py   # J-integral calculation parameters
 │   ├── utils/                   # Utility functions
 │   │   ├── logger.py            # Logging utility
 │   │   └── step2str.py          # Step number formatting
-│   ├── scripts/                 # Execution scripts
-│   │   └── linux_command.py     # Solver execution interface
-│   └── data/                    # FEM reference data
-│       └── FEMdata/             # Pre-computed FEM solutions
-├── sfem_linear/                 # Fortran solver (submodule)
+│   └── scripts/                 # Execution scripts
+│       └── linux_command.py     # Solver execution interface
+├── sfem_linear/                 # Fortran solver
 │   ├── bin/sfem_linear          # Compiled solver executable
 │   ├── src/                     # Fortran source code
 │   ├── example/                 # Example cases
 │   └── manual/                  # Solver documentation
 └── README.md                    # This file
 ```
-
-## Theoretical Background
-
-### Scaled Isogeometric Analysis (S-IGA)
-
-S-IGA extends traditional IGA by introducing a scaling strategy that combines:
-
-1. **Global NURBS Mesh**: Coarse mesh using Non-Uniform Rational B-Splines (NURBS) for the far-field region
-2. **Local Refined Mesh**: Fine mesh in cylindrical coordinates around the crack tip to capture singularities
-3. **Visualization Mesh**: Linear hexahedral elements for post-processing and boundary condition mapping
-
-The method achieves high accuracy in fracture mechanics simulations while maintaining computational efficiency through adaptive refinement.
-
-### Crack Geometry
-
-The implementation focuses on **circular penny-shaped cracks** in 3D elastic solids:
-- Crack radius: `c` (default: 4 mm)
-- Crack plane: z = 0
-- Crack propagation: Radially outward with velocity `V`
-- Crack front discretization: Polar coordinates with angular resolution `d_theta`
 
 ## Installation
 
@@ -95,6 +65,57 @@ cd ..
 3. Verify the solver is compiled:
 ```bash
 ls -lh sfem_linear/bin/sfem_linear
+```
+
+## Quick Start
+
+### Basic Workflow
+
+```bash
+cd circular_crack
+
+# 1. Run simulation for steps 0-10
+python3 main.py --step_start 0 --step_end 10
+
+# 2. Calculate J-integral and stress intensity factors from results
+python3 main.py --is_K --step_start 1 --step_end 10
+```
+
+### Example Use Cases
+
+#### Example 1: Generate Mesh Only (No Solver)
+```bash
+# Generate mesh and input files for step 5 without running solver
+python3 main.py --step_start 5 --step_end 6 --meshonly
+```
+
+#### Example 2: Run Solver Only (Mesh Already Exists)
+```bash
+# Run solver for existing mesh files
+python3 main.py --step_start 5 --step_end 6 --solveronly
+```
+
+#### Example 3: Single Step with Fresh Start
+```bash
+# Run single step 20 with no restart from previous step
+python3 main.py --particular --step_start 20 --no_restart
+```
+
+#### Example 4: Post-Process Results (J-Integral Calculation)
+```bash
+# Calculate J-integral and K_I for steps 50-100
+python3 main.py --is_K --step_start 50 --step_end 100
+
+# With custom J-integral domain parameters
+python3 main.py --is_K --step_start 50 --step_end 100 \
+    --Rj0 1.5 --Rj1 2.0 --Wj0 1.0 --Wj1 1.5 \
+    --velocity 1200.0 --output_K results/custom_J.csv
+```
+
+#### Example 5: Clean and Restart
+```bash
+# Delete all previous input files and start fresh
+python3 main.py --delete --step_start 0 --step_end 10
 ```
 
 ## Usage
@@ -128,10 +149,52 @@ nbcebc = 1            # BC type (0: force, 1: displacement)
 
 - **Local mesh** (`const_local_mesh.py`):
   - Element size: `hL = 0.04 mm`
-  - Crack surface elements: `aL = 9`
+  - Crack surface elements: `aL = 51`
   - Ligament elements: `lL = 15`
-  - Thickness elements: `HL = 8`
+  - Thickness elements: `HL = 11`
   - Angular resolution: `d_theta = 3°`
+
+- **J-integral parameters** (`const_jintegral.py`):
+  - Inner radius: `Rj0 = 1.5`
+  - Outer radius: `Rj1 = 1.515`
+  - Inner width: `Wj0 = 1.0`
+  - Outer width: `Wj1 = 1.01`
+  - Step range: `step_start = 1, step_end = 100`
+  - Output file: `output_file = "J_integral_results.csv"`
+
+### Command-Line Interface
+
+The `main.py` script provides a comprehensive command-line interface for all simulation tasks:
+
+#### Simulation Control
+```bash
+python3 main.py [OPTIONS]
+
+Options:
+  --step_start N        Starting step number (default: 0)
+  --step_end N          Ending step number (default: 101)
+  --meshonly            Generate mesh only, skip solver
+  --solveronly          Run solver only (mesh must exist)
+  --particular          Run single step (step_start only)
+  --restart 0/1         Force restart value (0: fresh, 1: restart)
+  --no_restart          Force fresh start for all steps
+  --delete              Delete inputfiles/ before running
+  --debugmode           Enable verbose debug logging
+```
+
+#### J-Integral and Fracture Analysis
+```bash
+python3 main.py --is_K [OPTIONS]
+
+J-Integral Options:
+  --is_K                Enable J-integral calculation mode
+  --Rj0 FLOAT           Inner radius for J-domain (default: 1.5)
+  --Rj1 FLOAT           Outer radius for J-domain (default: 1.515)
+  --Wj0 FLOAT           Inner width parameter (default: 1.0)
+  --Wj1 FLOAT           Outer width parameter (default: 1.01)
+  --velocity FLOAT      Crack velocity in m/s (default: 1000.0)
+  --output_K FILE       Output CSV file (default: J_integral_results.csv)
+```
 
 ### Running Simulations
 
@@ -149,12 +212,10 @@ l, g = makemeshs(step, REstart)
 linux_command.run(step)
 ```
 
-#### Multi-Step Simulation
-```python
-from circular_crack.main import main
-
-# Run full simulation (step_start to step_end)
-main()
+#### Multi-Step Simulation via Command Line
+```bash
+# Run steps 0-10 using command line
+python3 main.py --step_start 0 --step_end 10
 ```
 
 This will:
@@ -163,6 +224,60 @@ This will:
 3. Create input files for the solver
 4. Execute the solver
 5. Save results to `circular_crack/inputfiles/step#####/`
+
+### J-Integral and Stress Intensity Factor Calculation
+
+After running the simulation, calculate fracture mechanics parameters:
+
+```bash
+# Basic J-integral calculation
+python3 main.py --is_K --step_start 1 --step_end 100
+```
+
+This will:
+1. Load displacement, velocity, and acceleration data from `results/step#####/log/`
+2. Generate full-circle mesh (0-180°) from half-circle data (0-90°)
+3. Calculate J-integral for each crack front angle (0° to 90° in 3° increments)
+4. Compute stress intensity factors K_I using dynamic crack theory
+5. Output results to CSV files:
+   - `J_integral_results.csv`: J-integral values for all steps and angles
+   - `J_integral_results_KId.csv`: Stress intensity factors K_I
+
+#### J-Integral Theory
+
+The implementation follows the domain integral method for dynamic crack propagation:
+
+**J-Integral (Dynamic)**:
+$$J = J_s + J_d = \int_{\Gamma} \left[ W \delta_{1j} - \sigma_{ij} \frac{\partial u_i}{\partial x_1} \right] q_{,j} \, dV + \int_{\Gamma} \rho \ddot{u}_i \frac{\partial u_i}{\partial x_1} q \, dV$$
+
+where:
+- $J_s$: Static component (strain energy release rate)
+- $J_d$: Dynamic component (kinetic energy contribution)
+- $W = \frac{1}{2} \sigma_{ij} \varepsilon_{ij}$: Strain energy density
+- $q$: Weight function (1 at crack tip, 0 at domain boundary)
+- $\rho$: Material density
+- $\ddot{u}_i$: Acceleration field
+
+**Stress Intensity Factor**:
+$$K_I = \sqrt{\frac{E J}{(1+\nu) A_I}}$$
+
+where $A_I$ is a dynamic correction factor depending on crack velocity:
+$$A_I = \frac{\beta_1 (1 - \beta_2^2)}{4\beta_1\beta_2 - (1 + \beta_2^2)^2}$$
+
+with $\beta_1 = \sqrt{1 - (v/c_1)^2}$, $\beta_2 = \sqrt{1 - (v/c_2)^2}$, and $c_1$, $c_2$ are wave speeds.
+
+#### Output Format
+
+The CSV files contain:
+- **Column 1**: Step number
+- **Columns 2-32**: J or K_I values at angles 0°, 3°, 6°, ..., 87°, 90° (31 angles)
+
+Example output:
+```csv
+step,0.0,3.0,6.0,9.0,...,87.0,90.0
+1,1.556e7,1.554e7,1.548e7,...,1.540e7,1.556e7
+2,2.294e6,2.294e6,2.296e6,...,2.294e6,2.294e6
+```
 
 ### Output Files
 
@@ -183,13 +298,25 @@ For each simulation step, the following files are generated in `inputfiles/step#
 | `node.v.dat` | Visualization mesh nodes |
 | `elem.v.dat` | Visualization mesh elements |
 
-### Results
+### Simulation Results
 
-Solver output includes:
-- Displacement fields (`.dat` files)
-- Stress and strain fields
-- Convergence logs in `logs/`
-- VTU files for visualization (if enabled)
+Solver output is stored in `results/step#####/log/`:
+
+| File | Description |
+|------|-------------|
+| `u_gl.l.dat` | Global-local displacement field |
+| `v_gl.l.dat` | Velocity field |
+| `a_gl.l.dat` | Acceleration field |
+| `log.txt` | Solver convergence information |
+
+### J-Integral Results
+
+Post-processing output:
+
+| File | Description |
+|------|-------------|
+| `J_integral_results.csv` | J-integral values (all steps × 31 angles) |
+| `J_integral_results_KId.csv` | Stress intensity factors K_I |
 
 ## Technical Details
 
