@@ -2,13 +2,14 @@ import os
 import argparse
 import numpy as np
 from const import const_local_mesh, const_global_mesh, simulation_params as sp
+from const import const_jintegral as cji
 from initial import initial
 import global_mesh
 import local_mesh
 import boundary
 import input_generator
 from scripts import linux_command
-# from jintegral import jintegral
+from jintegral import JIntegralCalculator
 from utils.logger import logger
 from utils.step2str import step2str
 
@@ -72,6 +73,12 @@ def main():
         # Run steps 0-10 with solver
         python3 main.py --step_start 0 --step_end 10
         
+        # Calculate J-integral and K factors from results
+        python3 main.py --is_K --step_start 1 --step_end 101
+        
+        # Calculate J-integral with custom parameters
+        python3 main.py --is_K --step_start 50 --step_end 101 --Rj0 1.5 --Rj1 2.0
+        
         # Debug mode (more logging)
         python3 main.py --debugmode --step_start 2 --step_end 3
     """
@@ -80,9 +87,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Run simulation
   python3 main.py --step_start 2 --step_end 3 --meshonly
   python3 main.py --particular --step_start 5
   python3 main.py --step_start 0 --step_end 10
+  
+  # Post-process results (calculate J-integral and K factors)
+  python3 main.py --is_K --step_start 1 --step_end 101
+  python3 main.py --is_K --step_start 50 --step_end 101 --Rj0 1.5 --Rj1 2.0
         """
     )
     
@@ -112,18 +124,48 @@ Examples:
     argparser.add_argument("--delete", action="store_true", default=False,
                           help="Delete all files in inputfiles/ before running")
     
-    # J-integral (for future)
-    argparser.add_argument("--jonly", action="store_true", default=False,
-                          help="Only calculate J-integral (not implemented yet)")
+    # J-integral and K calculation
+    argparser.add_argument("--is_K", action="store_true", default=False,
+                          help="Calculate J-integral and stress intensity factors from results")
+    argparser.add_argument("--Rj0", type=float, default=None,
+                          help=f"Inner radius for J-integral domain (default: {cji.Rj0})")
+    argparser.add_argument("--Rj1", type=float, default=None,
+                          help=f"Outer radius for J-integral domain (default: {cji.Rj1})")
+    argparser.add_argument("--Wj0", type=float, default=None,
+                          help=f"Inner width for J-integral domain (default: {cji.Wj0})")
+    argparser.add_argument("--Wj1", type=float, default=None,
+                          help=f"Outer width for J-integral domain (default: {cji.Wj1})")
+    argparser.add_argument("--velocity", type=float, default=None,
+                          help=f"Crack velocity for J-integral [m/s] (default: {sp.V})")
+    argparser.add_argument("--output_K", type=str, default=None,
+                          help=f"Output file for J-integral results (default: {cji.output_file})")
     
     args = argparser.parse_args()
     
-    # Log arguments
+    # Log arguments with actual default values displayed
     logger.info("="*60)
     logger.info("S-IGA Circular Crack Simulation")
     logger.info("="*60)
     logger.info(f"Command line arguments:")
-    for arg, value in vars(args).items():
+    
+    # Display with actual defaults instead of None for better clarity
+    display_args = vars(args).copy()
+    if args.is_K:
+        # Show actual defaults for J-integral parameters when in K calculation mode
+        if display_args['Rj0'] is None:
+            display_args['Rj0'] = f"{cji.Rj0} (default)"
+        if display_args['Rj1'] is None:
+            display_args['Rj1'] = f"{cji.Rj1} (default)"
+        if display_args['Wj0'] is None:
+            display_args['Wj0'] = f"{cji.Wj0} (default)"
+        if display_args['Wj1'] is None:
+            display_args['Wj1'] = f"{cji.Wj1} (default)"
+        if display_args['velocity'] is None:
+            display_args['velocity'] = f"{sp.V} (default)"
+        if display_args['output_K'] is None:
+            display_args['output_K'] = f"{cji.output_file} (default)"
+    
+    for arg, value in display_args.items():
         logger.info(f"  {arg}: {value}")
     logger.info("="*60)
     
@@ -142,9 +184,43 @@ Examples:
         args.step_end = args.step_start + 1
         logger.info(f"PARTICULAR mode: running only step {args.step_start}")
     
-    # Handle J-integral only mode
-    if args.jonly:
-        logger.error("J-integral calculation not implemented yet")
+    # Handle J-integral calculation mode
+    if args.is_K:
+        logger.info("="*60)
+        logger.info("J-INTEGRAL AND STRESS INTENSITY FACTOR CALCULATION MODE")
+        logger.info("="*60)
+        
+        # Use default values from const_jintegral if not specified
+        step_start = args.step_start if args.step_start != sp.step_start else cji.step_start
+        step_end = args.step_end if args.step_end != sp.step_end else cji.step_end
+        Rj0 = args.Rj0 if args.Rj0 is not None else cji.Rj0
+        Rj1 = args.Rj1 if args.Rj1 is not None else cji.Rj1
+        Wj0 = args.Wj0 if args.Wj0 is not None else cji.Wj0
+        Wj1 = args.Wj1 if args.Wj1 is not None else cji.Wj1
+        velocity = args.velocity if args.velocity is not None else sp.V
+        output_K = args.output_K if args.output_K is not None else cji.output_file
+        
+        logger.info(f"Reading results from steps {step_start} to {step_end}")
+        logger.info(f"J-domain parameters: Rj=[{Rj0}, {Rj1}], Wj=[{Wj0}, {Wj1}]")
+        logger.info(f"Crack velocity: {velocity} m/s")
+        logger.info(f"Output file: {output_K}")
+        
+        try:
+            calculator = JIntegralCalculator(
+                step_start=step_start,
+                step_end=step_end,
+                Rj0=Rj0,
+                Rj1=Rj1,
+                Wj0=Wj0,
+                Wj1=Wj1,
+                v=velocity
+            )
+            calculator.run(output_file=output_K)
+        except Exception as e:
+            logger.error(f"J-integral calculation failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+        
         return
     
     # Determine step range
