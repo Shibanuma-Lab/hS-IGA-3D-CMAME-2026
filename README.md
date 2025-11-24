@@ -62,16 +62,78 @@ git clone <repository-url>
 cd S-IGA-circular-crack-in-3D-solid-linear
 ```
 
-2. Build the Fortran solver:
+2. Install Python dependencies:
+```bash
+pip install -r requirements.txt
+# Or use pip3 if needed
+pip3 install -r requirements.txt
+```
+
+3. Build the Fortran solver:
 ```bash
 cd sfem_linear
 make
 cd ..
 ```
 
-3. Verify the solver is compiled:
+4. Verify the solver is compiled:
 ```bash
 ls -lh sfem_linear/bin/sfem_linear
+```
+
+### 🔧 Alternative: One-Command Setup
+
+For convenience, you can use the automated setup script:
+
+```bash
+./setup.sh
+```
+
+This script will:
+- Check Python version
+- Install Python dependencies
+- Check for Fortran compiler
+- Build the solver
+- Verify installation
+
+### ⚠️ Troubleshooting
+
+#### ModuleNotFoundError: No module named 'numpy'
+
+If you encounter this error, install the required Python packages:
+
+```bash
+pip3 install -r requirements.txt
+
+# Or install individually
+pip3 install numpy scipy
+
+# If you don't have pip3, install it first:
+# Ubuntu/Debian: sudo apt-get install python3-pip
+# macOS: brew install python3
+```
+
+#### Solver compilation fails
+
+Make sure you have a Fortran compiler installed:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install gfortran
+
+# macOS
+brew install gcc
+
+# Verify installation
+gfortran --version
+```
+
+#### Permission denied when running setup.sh
+
+Make the script executable:
+
+```bash
+chmod +x setup.sh
 ```
 
 ## ⚡ Quick Start

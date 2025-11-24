@@ -1,0 +1,5 @@
+# Python dependencies for S-IGA Circular Crack Simulation
+# Install with: pip install -r requirements.txt
+
+numpy>=1.20.0
+scipy>=1.7.0
