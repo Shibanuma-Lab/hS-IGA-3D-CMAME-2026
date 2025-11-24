@@ -54,6 +54,8 @@ S-IGA-circular-crack-in-3D-solid-linear/
 - OpenMP support
 - Git
 
+> **💡 WSL Users**: See [WSL_SETUP.md](WSL_SETUP.md) for Windows Subsystem for Linux specific instructions.
+
 ### 🚀 Setup
 
 1. Clone the repository:
@@ -63,10 +65,18 @@ cd S-IGA-circular-crack-in-3D-solid-linear
 ```
 
 2. Install Python dependencies:
+
+**Option A: Using pip (Standard)**
 ```bash
-pip install -r requirements.txt
-# Or use pip3 if needed
 pip3 install -r requirements.txt
+# Or with user installation
+pip3 install --user -r requirements.txt
+```
+
+**Option B: Using system packages (Faster in WSL/Ubuntu)**
+```bash
+sudo apt update
+sudo apt install python3-numpy python3-scipy
 ```
 
 3. Build the Fortran solver:
@@ -81,15 +91,45 @@ cd ..
 ls -lh sfem_linear/bin/sfem_linear
 ```
 
-### 🔧 Alternative: One-Command Setup
+### 🔧 Automated Setup Options
 
-For convenience, you can use the automated setup script:
+#### Option A: Virtual Environment (Recommended)
+
+Using Python's built-in venv for isolated environment:
+
+```bash
+./setup_venv.sh
+```
+
+Then activate and use:
+```bash
+source venv/bin/activate
+cd circular_crack
+python main.py --help
+```
+
+#### Option B: Pipenv
+
+Using pipenv for dependency management:
+
+```bash
+./setup_pipenv.sh
+```
+
+Then use:
+```bash
+pipenv shell
+cd circular_crack
+python main.py --help
+```
+
+#### Option C: System-Wide Installation
 
 ```bash
 ./setup.sh
 ```
 
-This script will:
+All automated scripts will:
 - Check Python version
 - Install Python dependencies
 - Check for Fortran compiler
@@ -98,19 +138,41 @@ This script will:
 
 ### ⚠️ Troubleshooting
 
+#### pip3: command not found
+
+If `pip3` is not installed, install it first:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install python3-pip
+
+# macOS
+brew install python3
+
+# Or use Python's built-in pip installer
+python3 -m ensurepip --default-pip
+
+# Verify installation
+pip3 --version
+```
+
 #### ModuleNotFoundError: No module named 'numpy'
 
 If you encounter this error, install the required Python packages:
 
 ```bash
+# Recommended: Use requirements.txt
 pip3 install -r requirements.txt
+
+# If system-wide installation fails, try user installation
+pip3 install --user -r requirements.txt
 
 # Or install individually
 pip3 install numpy scipy
 
-# If you don't have pip3, install it first:
-# Ubuntu/Debian: sudo apt-get install python3-pip
-# macOS: brew install python3
+# Alternative: Use python3 -m pip
+python3 -m pip install numpy scipy
 ```
 
 #### Solver compilation fails

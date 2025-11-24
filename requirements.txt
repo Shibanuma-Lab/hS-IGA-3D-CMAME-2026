@@ -3,3 +3,4 @@
 
 numpy>=1.20.0
 scipy>=1.7.0
+logzero>=1.7.0
