@@ -2,7 +2,7 @@
 
 [![Version](https://img.shields.io/badge/version-1.0-blue.svg)](https://github.com/yourusername/S-IGA-circular-crack-in-3D-solid-linear)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/downloads/)
 [![Fortran](https://img.shields.io/badge/Fortran-90+-green.svg)](https://fortran-lang.org/)
 [![Lab](https://img.shields.io/badge/Lab-Shibanuma%20Lab-red.svg)](http://www.struct.t.u-tokyo.ac.jp/shibanuma/)
 [![University](https://img.shields.io/badge/University-UTokyo-orange.svg)](https://www.u-tokyo.ac.jp/)
