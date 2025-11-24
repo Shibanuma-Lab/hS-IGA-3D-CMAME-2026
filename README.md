@@ -7,13 +7,13 @@
 [![Lab](https://img.shields.io/badge/Lab-Shibanuma%20Lab-red.svg)](http://www.struct.t.u-tokyo.ac.jp/shibanuma/)
 [![University](https://img.shields.io/badge/University-UTokyo-orange.svg)](https://www.u-tokyo.ac.jp/)
 
-## Overview
+## 📖 Overview
 
 This repository implements a **S-version Isogeometric Analysis (S-IGA)** framework for simulating three-dimensional circular crack propagation in elastic solids. The method combines the advantages of NURBS-based Isogeometric Analysis (IGA) with local mesh refinement strategies to accurately capture crack-tip stress singularities and crack front behavior.
 
 The implementation is a Python-based mesh generation and pre-processing framework coupled with a Fortran-based finite element solver (`sfem_linear`).
 
-## Repository Structure
+## 📁 Repository Structure
 
 ```
 S-IGA-circular-crack-in-3D-solid-linear/
@@ -44,9 +44,9 @@ S-IGA-circular-crack-in-3D-solid-linear/
 └── README.md                    # This file
 ```
 
-## Installation
+## 🔧 Installation
 
-### Prerequisites
+### ✅ Prerequisites
 
 - Python 3.8+
 - NumPy, SciPy
@@ -54,7 +54,7 @@ S-IGA-circular-crack-in-3D-solid-linear/
 - OpenMP support
 - Git
 
-### Setup
+### 🚀 Setup
 
 1. Clone the repository:
 ```bash
@@ -74,9 +74,9 @@ cd ..
 ls -lh sfem_linear/bin/sfem_linear
 ```
 
-## Quick Start
+## ⚡ Quick Start
 
-### Basic Workflow
+### 🎯 Basic Workflow
 
 ```bash
 cd circular_crack
@@ -88,27 +88,27 @@ python3 main.py --step_start 0 --step_end 10
 python3 main.py --is_K --step_start 1 --step_end 10
 ```
 
-### Example Use Cases
+### 💡 Example Use Cases
 
-#### Example 1: Generate Mesh Only (No Solver)
+#### Example 1: 🌐 Generate Mesh Only (No Solver)
 ```bash
 # Generate mesh and input files for step 5 without running solver
 python3 main.py --step_start 5 --step_end 6 --meshonly
 ```
 
-#### Example 2: Run Solver Only (Mesh Already Exists)
+#### Example 2: ⚙️ Run Solver Only (Mesh Already Exists)
 ```bash
 # Run solver for existing mesh files
 python3 main.py --step_start 5 --step_end 6 --solveronly
 ```
 
-#### Example 3: Single Step with Fresh Start
+#### Example 3: 🎲 Single Step with Fresh Start
 ```bash
 # Run single step 20 with no restart from previous step
 python3 main.py --particular --step_start 20 --no_restart
 ```
 
-#### Example 4: Post-Process Results (J-Integral Calculation)
+#### Example 4: 📊 Post-Process Results (J-Integral Calculation)
 ```bash
 # Calculate J-integral and K_I for steps 50-100
 python3 main.py --is_K --step_start 50 --step_end 100
@@ -119,19 +119,19 @@ python3 main.py --is_K --step_start 50 --step_end 100 \
     --velocity 1200.0 --output_K results/custom_J.csv
 ```
 
-#### Example 5: Clean and Restart
+#### Example 5: 🧹 Clean and Restart
 ```bash
 # Delete all previous input files and start fresh
 python3 main.py --delete --step_start 0 --step_end 10
 ```
 
-## Usage
+## 📚 Usage
 
-### Configuration
+### ⚙️ Configuration
 
 Key parameters are configured in the `circular_crack/const/` directory:
 
-#### Material Properties (`material_property.py`)
+#### 🔬 Material Properties (`material_property.py`)
 ```python
 EE = 2.06e11          # Young's modulus [Pa]
 Nu = 0.3              # Poisson's ratio
@@ -139,7 +139,7 @@ Rho = 7800.0          # Density [kg/m³]
 SigmaInfinity = 1.0e11  # Applied stress [Pa]
 ```
 
-#### Simulation Parameters (`simulation_params.py`)
+#### 🎮 Simulation Parameters (`simulation_params.py`)
 ```python
 c = 4.0e-3            # Initial crack radius [m]
 V = 1000.0            # Crack velocity [m/s]
@@ -148,7 +148,7 @@ step_end = 10         # Ending step
 nbcebc = 1            # BC type (0: force, 1: displacement)
 ```
 
-#### Mesh Parameters
+#### 🌐 Mesh Parameters
 - **Global mesh** (`const_global_mesh.py`):
   - NURBS degrees: `p=2, q=2, r=2`
   - Element size ratio: `rGL = 6`
@@ -161,7 +161,7 @@ nbcebc = 1            # BC type (0: force, 1: displacement)
   - Thickness elements: `HL = 11`
   - Angular resolution: `d_theta = 3°`
 
-- **J-integral parameters** (`const_jintegral.py`):
+- **📐 J-integral parameters** (`const_jintegral.py`):
   - Inner radius: `Rj0 = 1.5`
   - Outer radius: `Rj1 = 1.515`
   - Inner width: `Wj0 = 1.0`
@@ -169,11 +169,11 @@ nbcebc = 1            # BC type (0: force, 1: displacement)
   - Step range: `step_start = 1, step_end = 100`
   - Output file: `output_file = "J_integral_results.csv"`
 
-### Command-Line Interface
+### 💻 Command-Line Interface
 
 The `main.py` script provides a comprehensive command-line interface for all simulation tasks:
 
-#### Simulation Control
+#### 🎛️ Simulation Control
 ```bash
 python3 main.py [OPTIONS]
 
@@ -189,7 +189,7 @@ Options:
   --debugmode           Enable verbose debug logging
 ```
 
-#### J-Integral and Fracture Analysis
+#### 🔬 J-Integral and Fracture Analysis
 ```bash
 python3 main.py --is_K [OPTIONS]
 
@@ -203,18 +203,18 @@ J-Integral Options:
   --output_K FILE       Output CSV file (default: J_integral_results.csv)
 ```
 
-## Contributing
+## 🤝 Contributing
 
 This is a research code developed for academic purposes. Contributions should maintain:
 - Code clarity and documentation
 - Compatibility with existing mesh format
 - Validation against analytical solutions
 
-## References
+## 📚 References
 
 1. Hughes, T.J.R. et al. "Isogeometric Analysis: CAD, Finite Elements, NURBS, Exact Geometry and Mesh Refinement." *Computer Methods in Applied Mechanics and Engineering*, 2005.
 
-## License
+## 📄 License
 
 MIT License
 
@@ -238,11 +238,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## Authors
+## 👨‍💻 Authors
 
 **Tianyu He**
 - Primary Developer and Maintainer
 
-## Acknowledgments
+## 🙏 Acknowledgments
 
 This work uses the `sfem_linear` solver framework and builds upon established methods in computational fracture mechanics and isogeometric analysis.
