@@ -48,155 +48,143 @@ S-IGA-circular-crack-in-3D-solid-linear/
 
 ### ✅ Prerequisites
 
-- Python 3.8+
-- NumPy, SciPy
-- Fortran compiler (gfortran or Intel Fortran)
-- OpenMP support
+- Python 3.10
+- Pipenv
+- Fortran compiler (gfortran, optional for building solver)
 - Git
 
-> **💡 WSL Users**: See [WSL_SETUP.md](WSL_SETUP.md) for Windows Subsystem for Linux specific instructions.
+### 🚀 Automated Setup (Recommended)
 
-### 🚀 Setup
+**One-command installation for new computers:**
 
-1. Clone the repository:
 ```bash
+# 1. Clone the repository
 git clone <repository-url>
 cd S-IGA-circular-crack-in-3D-solid-linear
+
+# 2. Run the automated setup script
+chmod +x setup.sh
+./setup.sh
 ```
 
-2. Install Python dependencies:
+The `setup.sh` script will automatically:
+1. ✅ Check if Python 3.10 is installed (install if missing)
+2. ✅ Check if Pipenv is installed (install if missing)
+3. ✅ Create a virtual environment with Pipenv
+4. ✅ Install all Python dependencies (numpy, scipy, logzero)
+5. ✅ Create necessary directories (e.g., `logs/`)
+6. ✅ Verify the Fortran solver binary
 
-**Option A: Using pip (Standard)**
-```bash
-pip3 install -r requirements.txt
-# Or with user installation
-pip3 install --user -r requirements.txt
-```
+### 📦 Manual Installation
 
-**Option B: Using system packages (Faster in WSL/Ubuntu)**
+If you prefer manual installation or encounter issues:
+
+#### Step 1: Install Python 3.10
+
+If Python 3.10 is not installed:
+
 ```bash
 sudo apt update
-sudo apt install python3-numpy python3-scipy
+sudo apt upgrade
+sudo apt install build-essential zlib1g-dev libncurses5-dev libgdbm-dev \
+                 libnss3-dev libssl-dev libsqlite3-dev libreadline-dev \
+                 libffi-dev libbz2-dev wget
+
+wget https://www.python.org/ftp/python/3.10.6/Python-3.10.6.tgz
+tar -xf Python-3.10.6.tgz
+cd Python-3.10.6
+./configure --enable-optimizations
+make -j$(nproc)
+sudo make altinstall
+
+# Verify
+python3.10 --version
 ```
 
-3. Build the Fortran solver:
+#### Step 2: Install Pipenv
+
+```bash
+python3.10 -m pip install --user pipenv
+
+# Add to PATH
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify
+pipenv --version
+```
+
+#### Step 3: Setup Virtual Environment
+
+```bash
+cd S-IGA-circular-crack-in-3D-solid-linear
+
+# Create virtual environment with Python 3.10
+pipenv --python /usr/local/bin/python3.10
+
+# Install dependencies from Pipfile
+pipenv install
+```
+
+#### Step 4: Create Required Directories
+
+```bash
+mkdir -p circular_crack/logs
+```
+
+### 🎮 Usage
+
+After installation, activate the environment and run:
+
+```bash
+# Method 1: Enter Pipenv shell
+pipenv shell
+cd circular_crack
+python3 main.py --help
+
+# Method 2: Run directly with pipenv
+cd circular_crack
+pipenv run python3 main.py --help
+```
+
+### ⚠️ Troubleshooting
+
+#### Python 3.10 not found
+
+Ensure Python 3.10 is installed and available in your PATH:
+
+```bash
+which python3.10
+python3.10 --version
+```
+
+#### Pipenv not found after installation
+
+Update your PATH and reload shell configuration:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+source ~/.bashrc
+```
+
+#### ModuleNotFoundError
+
+Make sure you're running inside the Pipenv environment:
+
+```bash
+pipenv shell
+# or
+pipenv run python3 main.py
+```
+
+#### Solver binary not found
+
+If you need to build the Fortran solver:
+
 ```bash
 cd sfem_linear
 make
 cd ..
-```
-
-4. Verify the solver is compiled:
-```bash
-ls -lh sfem_linear/bin/sfem_linear
-```
-
-### 🔧 Automated Setup Options
-
-#### Option A: Virtual Environment (Recommended)
-
-Using Python's built-in venv for isolated environment:
-
-```bash
-./setup_venv.sh
-```
-
-Then activate and use:
-```bash
-source venv/bin/activate
-cd circular_crack
-python main.py --help
-```
-
-#### Option B: Pipenv
-
-Using pipenv for dependency management:
-
-```bash
-./setup_pipenv.sh
-```
-
-Then use:
-```bash
-pipenv shell
-cd circular_crack
-python main.py --help
-```
-
-#### Option C: System-Wide Installation
-
-```bash
-./setup.sh
-```
-
-All automated scripts will:
-- Check Python version
-- Install Python dependencies
-- Check for Fortran compiler
-- Build the solver
-- Verify installation
-
-### ⚠️ Troubleshooting
-
-#### pip3: command not found
-
-If `pip3` is not installed, install it first:
-
-```bash
-# Ubuntu/Debian
-sudo apt-get update
-sudo apt-get install python3-pip
-
-# macOS
-brew install python3
-
-# Or use Python's built-in pip installer
-python3 -m ensurepip --default-pip
-
-# Verify installation
-pip3 --version
-```
-
-#### ModuleNotFoundError: No module named 'numpy'
-
-If you encounter this error, install the required Python packages:
-
-```bash
-# Recommended: Use requirements.txt
-pip3 install -r requirements.txt
-
-# If system-wide installation fails, try user installation
-pip3 install --user -r requirements.txt
-
-# Or install individually
-pip3 install numpy scipy
-
-# Alternative: Use python3 -m pip
-python3 -m pip install numpy scipy
-```
-
-#### Solver compilation fails
-
-Make sure you have a Fortran compiler installed:
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install gfortran
-
-# macOS
-brew install gcc
-
-# Verify installation
-gfortran --version
-```
-
-#### Permission denied when running setup.sh
-
-Make the script executable:
-
-```bash
-chmod +x setup.sh
-```
 
 ## ⚡ Quick Start
 
