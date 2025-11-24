@@ -3,8 +3,17 @@ from const import material_property as mp
 from const import const_local_mesh as clm
 from const import const_global_mesh as cgm
 
+# Analysis mode
+static_mode = False  # Set to True for static analysis (via --static_only flag)
+
 # Crack geometry (from param.txt)
-c = 4.0e-3  # Crack radius [m]
+if static_mode:
+    # Static mode: special crack radius
+    c = 1.0  # Crack radius [m]
+else:
+    # Dynamic mode: original crack radius
+    c = 4.0e-3  # Crack radius [m]
+
 thi = 1.0  # Thickness [m]
 
 # Crack velocity (from param.txt)
@@ -25,19 +34,41 @@ else:
 nbcebc = 1  # 0: nodal force, 1: essential boundary condition
 
 # Domain size for global mesh
-lGoutxy = 2 * c
-lGoutz = c
-WidthG = 8.0e-3
-HeightG = 4.0e-3
+if static_mode:
+    # Static mode: special domain size
+    WidthG = 2.0
+    HeightG = 1.0
+    lGoutxy = 2 * c
+    lGoutz = c
+else:
+    # Dynamic mode: original domain size
+    lGoutxy = 2 * c
+    lGoutz = c
+    WidthG = 8.0e-3
+    HeightG = 4.0e-3
 
 # Calculate global element size
-hG = cgm.mu_G * clm.hL * cgm.rGL
-
-# Calculate number of control points
-import numpy as np
-nPtsX = int(np.ceil(WidthG / hG))
-nPtsY = nPtsX
-nPtsZ = int(np.ceil(HeightG / hG))
+if not static_mode:
+    # Dynamic mode: original calculation
+    hG = cgm.mu_G * clm.hL * cgm.rGL
+    # Calculate number of control points
+    import numpy as np
+    nPtsX = int(np.ceil(WidthG / hG))
+    nPtsY = nPtsX
+    nPtsZ = int(np.ceil(HeightG / hG))
+else:
+    # Static mode: special calculation
+    hG_bf = cgm.mu_G * clm.hL * cgm.rGL
+    import numpy as np
+    nPtsX = int(np.ceil(WidthG / hG_bf)) + 1
+    nPtsY = nPtsX
+    nPtsZ = int(np.ceil(HeightG / hG_bf)) + 1
+    
+    # Calculate actual element sizes for static mode
+    hGX = cgm.mu_G * WidthG / (nPtsX - 1)
+    hGY = cgm.mu_G * WidthG / (nPtsY - 1)
+    hGZ = cgm.mu_G * HeightG / (nPtsZ - 1)
+    hG = hG_bf  # Keep for compatibility
 
 nofix = 1  # Changing boundary conditions: 0=No, 1=Yes
 
@@ -111,3 +142,28 @@ CALC_STEP = 1
 
 is_cross = False
 isgetctod = False
+
+
+def update_for_static_mode():
+    """Update simulation parameters for static mode"""
+    global c, WidthG, HeightG, hG, hGX, hGY, hGZ, nPtsX, nPtsY, nPtsZ
+    import numpy as np
+    
+    # Update crack radius (normalized to 1.0 in static mode)
+    c = 1.0  # Normalized crack radius [dimensionless]
+    
+    # Update domain size
+    WidthG = 2.0
+    HeightG = 1.0
+    
+    # Recalculate mesh parameters
+    hG_bf = cgm.mu_G * clm.hL * cgm.rGL
+    nPtsX = int(np.ceil(WidthG / hG_bf)) + 1
+    nPtsY = nPtsX
+    nPtsZ = int(np.ceil(HeightG / hG_bf)) + 1
+    
+    # Calculate actual element sizes
+    hGX = cgm.mu_G * WidthG / (nPtsX - 1)
+    hGY = cgm.mu_G * WidthG / (nPtsY - 1)
+    hGZ = cgm.mu_G * HeightG / (nPtsZ - 1)
+    hG = hG_bf

@@ -271,6 +271,11 @@ class Boundary:
         """
         logger.info(f"Setting up essential boundary conditions for global mesh (step={step})")
         
+        # Check if static mode is enabled
+        if sp.static_mode:
+            self._boundary_ebc_G_static(step)
+            return
+        
         nodeG = self.global_mesh.nodeG
         node_visual = self.global_mesh.node_visual
         elem_visual = self.global_mesh.elem_visual
@@ -375,6 +380,152 @@ class Boundary:
         
         # No applied load for essential BC case
         self.load = [[0]]
+    
+    def _boundary_ebc_G_static(self, step):
+        """
+        Essential boundary conditions for global mesh in STATIC mode
+        Based on Mathematica code with Sneddon analytical solution
+        """
+        logger.info(f"Setting up STATIC boundary conditions for global mesh (step={step})")
+        
+        from sneddon_solution import sneddon_displacement_cartesian
+        
+        nodeG = self.global_mesh.nodeG
+        node_visual = self.global_mesh.node_visual
+        elem_visual = self.global_mesh.elem_visual
+        elemG = self.global_mesh.elemG
+        elemV = elem_visual  # Visual elements for XY plane
+        
+        nPtsX = sp.nPtsX
+        nPtsY = sp.nPtsY
+        nPtsZ = sp.nPtsZ
+        
+        # Crack parameters
+        a = step * clm.hL  # Current crack radius
+        sigma_app = mp.SigmaInfinity  # Applied stress [Pa]
+        E = mp.EE  # Young's modulus
+        nu = mp.Nu  # Poisson's ratio
+        
+        logger.info(f"Static BC: crack radius a = {a*1000:.4f} mm")
+        
+        # Find nodes on boundaries (control points)
+        tol = 1e-10
+        
+        # bcX0: x = 0
+        bcX0 = np.where(np.abs(nodeG[:, 0]) < tol)[0] + 1  # 1-based
+        
+        # bcY0: y = 0
+        bcY0 = np.where(np.abs(nodeG[:, 1]) < tol)[0] + 1
+        
+        # === Find elements outside crack (eout) ===
+        # Based on visualization mesh (node_visual)
+        # eout: elements where max radius > a
+        nelemU = len(np.unique(self.global_mesh.uKnot)) - 1
+        nelemV = len(np.unique(self.global_mesh.vKnot)) - 1
+        
+        eout = []
+        for e in range(nelemU * nelemV):
+            if e >= len(elemV):
+                break
+            # Get visual nodes of this XY element
+            elem_nodes = elemV[e]
+            # Calculate max radius in xy-plane
+            max_r = 0.0
+            for node_id in elem_nodes:
+                if node_id > 0 and node_id <= len(node_visual):
+                    node_pos = node_visual[node_id - 1]
+                    r = np.sqrt(node_pos[0]**2 + node_pos[1]**2)
+                    max_r = max(max_r, r)
+            
+            if max_r > a:
+                eout.append(e)
+        
+        # nout: control points in elements outside crack (union of nodes)
+        nout = set()
+        for e in eout:
+            if e < len(elemG):
+                nout.update(elemG[e])
+        nout = sorted(list(nout))
+        
+        logger.info(f"Static BC: {len(eout)} elements outside crack, {len(nout)} nodes")
+        
+        # bcZ0: intersection of nout with z=0 plane control points
+        # z=0 plane has indices 1 to nPtsX*nPtsY
+        z0_nodes = set(range(1, nPtsX * nPtsY + 1))
+        bcZ0 = sorted(list(z0_nodes.intersection(set(nout))))
+        
+        # === Outer boundaries (bcEX) for prescribed displacement ===
+        # bcX1: x = max
+        bcX1 = [(m + 1) * nPtsX for m in range(nPtsX * nPtsZ)]
+        
+        # bcY1: y = max
+        bcY1 = []
+        for k in range(1, nPtsZ + 1):
+            base = k * nPtsX * nPtsX
+            for i in range(nPtsX + 1):
+                bcY1.append(base - i)
+        
+        # bcZ1: z = max
+        bcZ1 = [nPtsX * nPtsX * nPtsZ - m + 1 for m in range(1, nPtsX * nPtsX + 1)]
+        
+        # bcEX: union of outer boundaries
+        bcEX = sorted(list(set(bcX1 + bcY1 + bcZ1)))
+        
+        # Remove outer boundary nodes from inner symmetry BC
+        bcX0 = [n for n in bcX0 if n not in bcEX]
+        bcY0 = [n for n in bcY0 if n not in bcEX]
+        bcZ0 = [n for n in bcZ0 if n not in bcEX]
+        
+        logger.info(f"Static BC: bcX0={len(bcX0)}, bcY0={len(bcY0)}, bcZ0={len(bcZ0)}, bcEX={len(bcEX)}")
+        
+        # === Calculate displacement for bcEX nodes using Sneddon solution ===
+        def getbc(node_id):
+            """Calculate BC for a single node using Sneddon solution"""
+            node_idx = node_id - 1  # Convert to 0-based
+            coords = nodeG[node_idx]
+            x, y, z = coords
+            
+            # Calculate theta for cylindrical coordinates
+            if abs(x) < 1e-15:
+                theta = np.pi / 2.0
+            else:
+                theta = np.arctan(y / x)
+            
+            # Get displacement from Sneddon solution
+            r = np.sqrt(x**2 + y**2)
+            disp = sneddon_displacement_cartesian(sigma_app, a, E, nu, coords)
+            
+            # Return as list of [node_id, dof, value] entries
+            return [
+                [node_id, 1, disp[0]],  # u_x
+                [node_id, 2, disp[1]],  # u_y
+                [node_id, 3, disp[2]]   # u_z
+            ]
+        
+        # Assemble BCs
+        nbcG = len(bcX0) + len(bcY0) + len(bcZ0) + 3 * len(bcEX)
+        
+        bcG_list = [[nbcG]]
+        
+        # Symmetry BCs (zero displacement)
+        for node in bcX0:
+            bcG_list.append([int(node), 1, 0.0])
+        for node in bcY0:
+            bcG_list.append([int(node), 2, 0.0])
+        for node in bcZ0:
+            bcG_list.append([int(node), 3, 0.0])
+        
+        # Prescribed displacement BCs (Sneddon solution)
+        for node in bcEX:
+            bc_entries = getbc(node)
+            bcG_list.extend(bc_entries)
+        
+        self.bcG = bcG_list
+        
+        # No applied load for essential BC case
+        self.load = [[0]]
+        
+        logger.info(f"Static BC: Total {nbcG} boundary conditions applied")
     
     def _get_fem_bc_values(self, node_indices, step):
         """

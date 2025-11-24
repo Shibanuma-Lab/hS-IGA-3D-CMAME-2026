@@ -202,5 +202,9 @@ cython_debug/
 *.pvtu
 .DS_STORE
 
+# Sneddon interpolation data (large files, regenerate locally)
+circular_crack/sneddon_interpolation.npz
+circular_crack/sneddon_interpolation_test.npz
+
 # Credentials
 credentials

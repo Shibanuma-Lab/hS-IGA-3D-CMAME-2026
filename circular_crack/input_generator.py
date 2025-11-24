@@ -15,8 +15,13 @@ def generate(step, REstart):
     
     from const import const_local_mesh as clm, const_global_mesh as cgm
     
-    # Solution type: 1=static (step=0), 2=dynamic (step>0)
-    solution_type = 1 if step == 0 else 2
+    # Solution type: 1=static, 2=dynamic
+    # In static mode, always use solution_type=1
+    if sp.static_mode:
+        solution_type = 1
+        logger.info(f"Static mode: solution_type=1 (static analysis)")
+    else:
+        solution_type = 1 if step == 0 else 2
     
     # Nonlinear geometry: 0=off, 1=on
     is_nlgeom = 0
@@ -57,7 +62,12 @@ def generate(step, REstart):
     nrefine = sp.nrefLlist  # h-refine level
     
     # Restart flag
-    is_restart = REstart
+    # In static mode, always use is_restart=0 (no restart)
+    if sp.static_mode:
+        is_restart = 0
+        logger.info(f"Static mode: is_restart=0 (fresh start)")
+    else:
+        is_restart = REstart
     
     # Number of threads
     num_threads = sp.OPENMP

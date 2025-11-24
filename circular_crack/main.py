@@ -1,7 +1,7 @@
 import os
 import argparse
 import numpy as np
-from const import const_local_mesh, const_global_mesh, simulation_params as sp
+from const import const_local_mesh as clm, const_global_mesh, simulation_params as sp
 from const import const_jintegral as cji
 from initial import initial
 import global_mesh
@@ -45,7 +45,10 @@ def makemeshs(step, REstart):
     # Generate virtual mesh if needed
     input_generator.generate_virtual_mesh()
     
-    if REstart == 1:
+    # Skip initial condition generation in static mode
+    if sp.static_mode:
+        logger.info(f"step: {step} :: Static mode - skipping initial condition files")
+    elif REstart == 1:
         logger.info(f"step: {step} :: Initialize from Previous Step")
         init = initial(step, l, g)
     
@@ -140,7 +143,31 @@ Examples:
     argparser.add_argument("--output_K", type=str, default=None,
                           help=f"Output file for J-integral results (default: {cji.output_file})")
     
+    # Analysis mode
+    argparser.add_argument("--static_only", action="store_true", default=False,
+                          help="Static analysis mode with special mesh and boundary conditions")
+    
     args = argparser.parse_args()
+    
+    # Set static mode flag in simulation_params before any mesh generation
+    sp.static_mode = args.static_only
+    if args.static_only:
+        logger.info("*** STATIC ANALYSIS MODE ENABLED ***")
+        # Update local mesh parameters for static mode
+        clm.update_for_static_mode()
+        # Update simulation params for static mode
+        sp.update_for_static_mode()
+        
+        # Calculate step automatically: step = c / hL (rounded to integer)
+        auto_step = int(round(sp.c / clm.hL))
+        logger.info(f"Static mode: auto-calculated step = round(c/hL) = round({sp.c}/{clm.hL}) = {auto_step}")
+        
+        # Override user input for step_start and step_end
+        args.step_start = auto_step
+        args.step_end = auto_step + 1
+        
+        logger.info(f"Static parameters: c={sp.c*1000:.3f}mm, hL={clm.hL:.6f}m (hL=1/{1/clm.hL:.0f}), WidthG={sp.WidthG}m")
+        logger.info(f"Using step={auto_step} (a = step×hL = {auto_step}×{clm.hL:.6f} = {auto_step*clm.hL:.6f}m)")
     
     # Log arguments with actual default values displayed
     logger.info("="*60)

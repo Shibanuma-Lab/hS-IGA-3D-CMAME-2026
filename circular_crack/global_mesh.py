@@ -29,7 +29,15 @@ class GlobalMesh:
         self.nPtsZ = sp.nPtsZ
         
         # Element size
-        self.hG = sp.hG
+        if sp.static_mode:
+            # Static mode: use non-uniform spacing
+            self.hGx = sp.hGX
+            self.hGy = sp.hGY
+            self.hGz = sp.hGZ
+            self.hG = sp.hG  # Keep for compatibility
+        else:
+            # Dynamic mode: uniform spacing
+            self.hG = sp.hG
         
         # Mesh data
         self.nodeG = None
@@ -58,9 +66,16 @@ class GlobalMesh:
             return 0.0 if abs(x) < 1e-9 * sp.WidthG else x
         
         # 1. Generate nodal coordinates (control points)
-        nodeGx = self.hG * np.arange(self.nPtsX)
-        nodeGy = self.hG * np.arange(self.nPtsY)
-        nodeGz = self.hG * np.arange(self.nPtsZ)
+        if sp.static_mode:
+            # Static mode: non-uniform element spacing
+            nodeGx = self.hGx * np.arange(self.nPtsX)
+            nodeGy = self.hGy * np.arange(self.nPtsY)
+            nodeGz = self.hGz * np.arange(self.nPtsZ)
+        else:
+            # Dynamic mode: uniform element spacing
+            nodeGx = self.hG * np.arange(self.nPtsX)
+            nodeGy = self.hG * np.arange(self.nPtsY)
+            nodeGz = self.hG * np.arange(self.nPtsZ)
         
         # Create 2D grid for XY plane
         nodeGxy = []
