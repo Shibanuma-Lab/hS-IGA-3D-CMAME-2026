@@ -209,17 +209,124 @@ def load_interpolation_data(filename='sneddon_interpolation.npz'):
     """
     Load precomputed Sneddon interpolation data
     
+    Can load from:
+    - .npz format (Python generated)
+    - .mat format (Mathematica exported)
+    
     Returns:
     --------
     interpolator : RegularGridInterpolator
     c : float (crack radius used for normalization)
     """
-    # Load data
-    data_file = np.load(filename)
-    r_grid = data_file['r_grid']
-    z_grid = data_file['z_grid']
-    data = data_file['data']
-    c = float(data_file['c'])
+    if filename.endswith('.mat'):
+        # Load from Mathematica .mat file
+        return load_from_mathematica_mat(filename)
+    else:
+        # Load from Python .npz file
+        data_file = np.load(filename)
+        r_grid = data_file['r_grid']
+        z_grid = data_file['z_grid']
+        data = data_file['data']
+        c = float(data_file['c'])
+        
+        # Create interpolator
+        interpolator = RegularGridInterpolator(
+            (r_grid, z_grid),
+            data,
+            method='linear',
+            bounds_error=False,
+            fill_value=None
+        )
+        
+        logger.info(f"Loaded interpolation data from {filename}")
+        logger.info(f"  Grid: {len(r_grid)}x{len(z_grid)}, c={c}")
+        
+        return interpolator, c
+
+
+def load_from_mathematica_mat(filename='sneddon_SA.mat'):
+    """
+    Load Sneddon interpolation data from Mathematica .mat file
+    
+    The .mat file should contain:
+    - posA: Nx2 array of (z, r) coordinates
+    - SA: Nx4 array of [ur1, ur2, uz1, uz2] values
+    - c: crack radius
+    - WG, HG: domain size
+    - nW, nH: grid dimensions
+    
+    Returns:
+    --------
+    interpolator : RegularGridInterpolator
+    c : float (crack radius used for normalization)
+    """
+    try:
+        from scipy.io import loadmat
+    except ImportError:
+        logger.error("scipy.io.loadmat not available. Install scipy to load .mat files")
+        raise
+    
+    logger.info(f"Loading Mathematica data from {filename}")
+    
+    # Load .mat file
+    mat_data = loadmat(filename)
+    
+    # Extract data (Mathematica uses 1-based indexing, MATLAB format stores in specific way)
+    # NOTE: posA from Mathematica Outer[{#2, #1}&, posAz, posAr] is actually [r, z]!
+    posA = mat_data['posA']  # Nx2: [r, z] for each point (NOT [z, r]!)
+    SA = mat_data['SA']      # Nx4: [ur1, ur2, uz1, uz2] for each point
+    c = float(mat_data['c'][0, 0])
+    WG = float(mat_data['WG'][0, 0])
+    HG = float(mat_data['HG'][0, 0])
+    nW = int(mat_data['nW'][0, 0])
+    nH = int(mat_data['nH'][0, 0])
+    
+    actual_points = len(posA)
+    expected_points = nW * nH
+    
+    logger.info(f"  Declared grid: {nW}x{nH} = {expected_points}, c={c}")
+    logger.info(f"  Actual points: {actual_points}")
+    logger.info(f"  Domain: r ∈ [0, {WG}], z ∈ [0, {HG}]")
+    
+    # Auto-detect actual grid dimensions (Mathematica Range issue: generates nW+1 points)
+    if actual_points != expected_points:
+        # Try to infer actual dimensions from data
+        # posA is [r, z], so column 0 is r, column 1 is z
+        unique_r = np.unique(posA[:, 0])
+        unique_z = np.unique(posA[:, 1])
+        nW_actual = len(unique_r)
+        nH_actual = len(unique_z)
+        
+        logger.warning(f"  Grid mismatch detected!")
+        logger.warning(f"  Declared: {nW}x{nH} = {expected_points}")
+        logger.warning(f"  Actual: {nW_actual}x{nH_actual} = {nW_actual*nH_actual}")
+        
+        if nW_actual * nH_actual == actual_points:
+            logger.info(f"  ✓ Auto-corrected to {nW_actual}x{nH_actual}")
+            nW = nW_actual
+            nH = nH_actual
+        else:
+            raise ValueError(
+                f"Cannot determine grid dimensions!\n"
+                f"Declared: {nW}x{nH} = {expected_points}\n"
+                f"Actual points: {actual_points}\n"
+                f"Detected unique: {nW_actual}x{nH_actual} = {nW_actual*nH_actual}"
+            )
+    
+    # Reshape data to regular grid
+    # posA from Mathematica is flattened: Flatten[Outer[{#2, #1}&, posAz, posAr], 1]
+    # Outer[{#2, #1}&, posAz, posAr] means: {r from posAr, z from posAz}
+    # Flatten with level 1 means: for each z in posAz, for each r in posAr
+    # So the order is: (r0,z0), (r1,z0), ..., (rN,z0), (r0,z1), (r1,z1), ...
+    r_grid = np.linspace(0, WG, nW)
+    z_grid = np.linspace(0, HG, nH)
+    
+    # Reshape SA: (nH*nW, 4) -> (nH, nW, 4) -> (nW, nH, 4)
+    # Data is ordered as: for each z, all r values
+    # So reshape to (nH, nW, 4) first, then transpose to (nW, nH, 4)
+    data = SA.reshape(nH, nW, 4).transpose(1, 0, 2)
+    
+    logger.info(f"  Reshaped data to ({nW}, {nH}, 4)")
     
     # Create interpolator
     interpolator = RegularGridInterpolator(
@@ -230,8 +337,7 @@ def load_interpolation_data(filename='sneddon_interpolation.npz'):
         fill_value=None
     )
     
-    logger.info(f"Loaded interpolation data from {filename}")
-    logger.info(f"  Grid: {len(r_grid)}x{len(z_grid)}, c={c}")
+    logger.info("✓ Mathematica interpolation data loaded successfully")
     
     return interpolator, c
 

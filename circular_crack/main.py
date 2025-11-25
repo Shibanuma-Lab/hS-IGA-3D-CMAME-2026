@@ -2,7 +2,7 @@ import os
 import argparse
 import numpy as np
 from const import const_local_mesh as clm, const_global_mesh, simulation_params as sp
-from const import const_jintegral as cji
+from const import const_jintegral as cji, material_property as mp
 from initial import initial
 import global_mesh
 import local_mesh
@@ -153,10 +153,12 @@ Examples:
     sp.static_mode = args.static_only
     if args.static_only:
         logger.info("*** STATIC ANALYSIS MODE ENABLED ***")
-        # Update local mesh parameters for static mode
-        clm.update_for_static_mode()
-        # Update simulation params for static mode
-        sp.update_for_static_mode()
+        logger.info("    Using dimensionless (normalized) units")
+        
+        # Update all parameters for static mode (dimensionless system)
+        clm.update_for_static_mode()  # Local mesh
+        sp.update_for_static_mode()   # Simulation params
+        mp.update_for_static_mode()   # Material properties
         
         # Calculate step automatically: step = c / hL (rounded to integer)
         auto_step = int(round(sp.c / clm.hL))
@@ -166,8 +168,10 @@ Examples:
         args.step_start = auto_step
         args.step_end = auto_step + 1
         
-        logger.info(f"Static parameters: c={sp.c*1000:.3f}mm, hL={clm.hL:.6f}m (hL=1/{1/clm.hL:.0f}), WidthG={sp.WidthG}m")
-        logger.info(f"Using step={auto_step} (a = step×hL = {auto_step}×{clm.hL:.6f} = {auto_step*clm.hL:.6f}m)")
+        logger.info(f"Static parameters (dimensionless):")
+        logger.info(f"  Geometry: c={sp.c}, hL={clm.hL} (hL=1/{1/clm.hL:.0f}), WidthG={sp.WidthG}, HeightG={sp.HeightG}")
+        logger.info(f"  Material: E={mp.EE}, ν={mp.Nu}, σ={mp.SigmaInfinity}")
+        logger.info(f"  Analysis: step={auto_step} → a = {auto_step}×{clm.hL} = {auto_step*clm.hL}")
     
     # Log arguments with actual default values displayed
     logger.info("="*60)

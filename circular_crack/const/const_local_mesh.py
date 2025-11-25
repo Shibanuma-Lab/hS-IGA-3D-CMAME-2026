@@ -11,7 +11,9 @@ HL = 11  # Number of local elements in thickness direction
 d_theta = 3  # Angular resolution [degrees]
 
 # Static mode values (will be set by update_for_static_mode)
-hL_static = 1.0 / 48.0
+# Note: Static mode uses dimensionless (normalized) units
+#       All values are pure numbers without physical units
+hL_static = 1.0 / 48.0  # Normalized element size (dimensionless)
 aL_static = 12
 lL_static = 12
 HL_static = 12

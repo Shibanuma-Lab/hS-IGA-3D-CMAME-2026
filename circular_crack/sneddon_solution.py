@@ -29,16 +29,30 @@ def _load_interpolator():
     if _sneddon_interpolator is not None:
         return _sneddon_interpolator, _sneddon_c
     
-    # Try to load precomputed data
-    data_file = 'sneddon_interpolation.npz'
+    # Get the directory where this file is located
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Priority 1: Try Mathematica .mat file (most accurate)
+    mat_file = os.path.join(current_dir, 'sneddon_SA.mat')
+    if os.path.exists(mat_file):
+        from sneddon_precompute import load_interpolation_data
+        _sneddon_interpolator, _sneddon_c = load_interpolation_data(mat_file)
+        return _sneddon_interpolator, _sneddon_c
+    
+    # Priority 2: Try Python .npz file
+    data_file = os.path.join(current_dir, 'sneddon_interpolation.npz')
     if not os.path.exists(data_file):
         # Fall back to test data
-        data_file = 'sneddon_interpolation_test.npz'
+        data_file = os.path.join(current_dir, 'sneddon_interpolation_test.npz')
         if not os.path.exists(data_file):
             raise FileNotFoundError(
                 f"Sneddon interpolation data not found!\n"
-                f"Please run: python sneddon_precompute.py\n"
-                f"This will generate {data_file}"
+                f"Please either:\n"
+                f"  1. Export from Mathematica: sneddon_SA.mat\n"
+                f"  2. Run: python sneddon_precompute.py\n"
+                f"Expected locations:\n"
+                f"  {current_dir}/sneddon_SA.mat (preferred)\n"
+                f"  {current_dir}/sneddon_interpolation.npz"
             )
     
     from sneddon_precompute import load_interpolation_data
@@ -91,11 +105,18 @@ def sneddon_displacement_interpolated(sigma_app, a, E, nu, point):
     # Based on Mathematica SneddonApp:
     # ur = (2*p0*c)/(π*E) * ((1-2ν)*ur1 - ur2)
     # uz = -(4*p0*c*(1-ν²))/(π*E) * (uz1 + uz2/(2*(1-ν)))
+    #
+    # IMPORTANT: Both formulas contain (1+ν) factor:
+    #   - ur has explicit (1+ν) factor (see note below)
+    #   - uz has (1-ν²) = (1-ν)(1+ν), so (1+ν) is already included
+    #
+    # NOTE: The (1+ν) factor in ur is required to match Mathematica's SneddonApp output
+    # when converting from cylindrical to Cartesian coordinates.
     
     if abs(r) < 1e-15:
         u_r_crack = 0.0
     else:
-        u_r_crack = (2 * sigma_app * a) / (np.pi * E) * ((1 - 2*nu) * ur1 - ur2)
+        u_r_crack = (2 * sigma_app * a * (1 + nu)) / (np.pi * E) * ((1 - 2*nu) * ur1 - ur2)
     
     if r >= a and abs(z) < 1e-15:
         u_z_crack = 0.0

@@ -402,11 +402,15 @@ class Boundary:
         
         # Crack parameters
         a = step * clm.hL  # Current crack radius
-        sigma_app = mp.SigmaInfinity  # Applied stress [Pa]
-        E = mp.EE  # Young's modulus
+        sigma_app = mp.SigmaInfinity  # Applied stress (Pa or dimensionless)
+        E = mp.EE  # Young's modulus (Pa or dimensionless)
         nu = mp.Nu  # Poisson's ratio
         
-        logger.info(f"Static BC: crack radius a = {a*1000:.4f} mm")
+        # Log crack radius (with correct units)
+        if sp.static_mode:
+            logger.info(f"Static BC: crack radius a = {a:.4f} (dimensionless)")
+        else:
+            logger.info(f"Static BC: crack radius a = {a*1000:.4f} mm")
         
         # Find nodes on boundaries (control points)
         tol = 1e-10

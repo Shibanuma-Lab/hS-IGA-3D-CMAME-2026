@@ -202,9 +202,43 @@ cython_debug/
 *.pvtu
 .DS_STORE
 
-# Sneddon interpolation data (large files, regenerate locally)
-circular_crack/sneddon_interpolation.npz
-circular_crack/sneddon_interpolation_test.npz
+# ============================================================================
+# Circular Crack Project - Ignore Rules
+# ============================================================================
+
+# Sneddon interpolation data (npz files not needed, use .mat instead)
+circular_crack/*.npz
+
+# Debug and documentation markdown files (keep only README.md)
+# In circular_crack directory
+circular_crack/*.md
+!circular_crack/README.md
+
+# In root directory (keep only README.md)
+*.md
+!README.md
+
+# Mathematica notebooks used for debugging/reference
+circular_crack/*.nb
+circular_crack/export_sneddon_data.nb
+
+# Test and debug Python scripts
+circular_crack/test_*.py
+circular_crack/*_test.py
+
+# CSV and Excel result files from debugging
+circular_crack/*.csv
+circular_crack/*.xlsx
+
+# Shell scripts for data generation (already executed)
+circular_crack/generate_*.sh
+circular_crack/*.sh
+
+# BC reference data from Mathematica (for comparison only, not needed in production)
+circular_crack/bc.g.ma.dat
+
+# Keep the essential Mathematica data file (REQUIRED for running)
+!circular_crack/sneddon_SA.mat
 
 # Credentials
 credentials
