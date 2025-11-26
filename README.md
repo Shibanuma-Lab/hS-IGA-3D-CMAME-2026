@@ -25,6 +25,10 @@ S-IGA-circular-crack-in-3D-solid-linear/
 │   ├── initial.py               # Initial condition setup for restart
 │   ├── input_generator.py       # Input file generation for solver
 │   ├── jintegral.py             # J-integral and stress intensity factor calculation
+│   ├── sneddon_solution.py      # Sneddon analytical solution for penny-shaped crack
+│   ├── sneddon_precompute.py    # Precomputed Bessel integrals loader
+│   ├── sneddon_SA.mat           # Mathematica interpolation data (REQUIRED)
+│   ├── fem_data_loader.py       # FEM result data loader and parser
 │   ├── const/                   # Configuration parameters
 │   │   ├── simulation_params.py # Simulation control parameters
 │   │   ├── material_property.py # Material properties (E, ν, ρ, etc.)
@@ -202,19 +206,32 @@ python3 main.py --is_K --step_start 1 --step_end 10
 
 ### 💡 Example Use Cases
 
-#### Example 1: 🌐 Generate Mesh Only (No Solver)
+#### Example 1: 🔬 Static Mode - Validate with Analytical Solution
+```bash
+# Run static analysis with Sneddon analytical boundary conditions
+# This mode applies exact displacement BCs from penny-shaped crack solution
+python3 main.py --static_only
+
+# The static mode will:
+# - Generate mesh for step 0 (initial crack configuration)
+# - Apply Sneddon analytical solution as displacement BCs
+# - Run solver and compare results with analytical solution
+# - Generate validation report in logs/
+```
+
+#### Example 2: 🌐 Generate Mesh Only (No Solver)
 ```bash
 # Generate mesh and input files for step 5 without running solver
 python3 main.py --step_start 5 --step_end 6 --meshonly
 ```
 
-#### Example 2: ⚙️ Run Solver Only (Mesh Already Exists)
+#### Example 3: ⚙️ Run Solver Only (Mesh Already Exists)
 ```bash
 # Run solver for existing mesh files
 python3 main.py --step_start 5 --step_end 6 --solveronly
 ```
 
-#### Example 3: 🎲 Single Step with Fresh Start
+#### Example 4: 🎲 Single Step with Fresh Start
 ```bash
 # Run single step 20 with no restart from previous step
 python3 main.py --particular --step_start 20 --no_restart
@@ -292,6 +309,7 @@ python3 main.py [OPTIONS]
 Options:
   --step_start N        Starting step number (default: 0)
   --step_end N          Ending step number (default: 101)
+  --static_only         Run static analysis with Sneddon analytical BCs (validation mode)
   --meshonly            Generate mesh only, skip solver
   --solveronly          Run solver only (mesh must exist)
   --particular          Run single step (step_start only)
