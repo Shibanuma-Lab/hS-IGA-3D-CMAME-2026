@@ -36,10 +36,17 @@ HeightG = 4.0e-3  # [m]
 
 # Calculate global element size (dynamic mode defaults)
 import numpy as np
-hG = cgm.mu_G * clm.hL * cgm.rGL
-nPtsX = int(np.ceil(WidthG / hG))
+# hG = cgm.mu_G * clm.hL * cgm.rGL
+# nPtsX = int(np.ceil(WidthG / hG))
+# nPtsY = nPtsX
+# nPtsZ = int(np.ceil(HeightG / hG))
+Lx = WidthG * cgm.mu_G  # Adjusted domain length in X direction
+Ly = WidthG * cgm.mu_G  # Adjusted domain length in Y direction
+Lz = HeightG * cgm.mu_G  # Adjusted domain length in Z direction
+
+nPtsX = int(np.ceil(Lx / (clm.hL * cgm.rGL))) + cgm.p
 nPtsY = nPtsX
-nPtsZ = int(np.ceil(HeightG / hG))
+nPtsZ = int(np.ceil(Lz / (clm.hL * cgm.rGL))) + cgm.r
 
 nofix = 1  # Changing boundary conditions: 0=No, 1=Yes
 
@@ -120,23 +127,39 @@ def update_for_static_mode():
     
     Static mode uses dimensionless (normalized) units, completely independent from dynamic mode.
     This is an idealized case where all quantities are pure numbers without physical units.
+    
+    IMPORTANT: This function must be called AFTER clm.update_for_static_mode()
+               to ensure hL is updated before calculating nPtsX/Y/Z.
     """
-    global c, WidthG, HeightG, hG, hGX, hGY, hGZ, nPtsX, nPtsY, nPtsZ
+    global c, WidthG, HeightG, Lx, Ly, Lz, nPtsX, nPtsY, nPtsZ
     import numpy as np
+    
+    # Re-import to get updated values after clm.update_for_static_mode() was called
+    from const import const_local_mesh as clm_updated
+    from const import const_global_mesh as cgm_updated
     
     # Static mode: dimensionless/normalized units (matching Mathematica)
     c = 1.0       # Normalized crack radius (dimensionless)
     WidthG = 2.0  # Normalized domain width (dimensionless)
     HeightG = 1.0 # Normalized domain height (dimensionless)
     
-    # Recalculate mesh parameters
-    hG_bf = cgm.mu_G * clm.hL * cgm.rGL
-    nPtsX = int(np.ceil(WidthG / hG_bf)) + 1
+    # Calculate adjusted domain lengths
+    Lx = WidthG * cgm_updated.mu_G  # Adjusted domain length in X direction
+    Ly = WidthG * cgm_updated.mu_G  # Adjusted domain length in Y direction
+    Lz = HeightG * cgm_updated.mu_G  # Adjusted domain length in Z direction
+
+    # Calculate number of control points using UPDATED hL value
+    nPtsX = int(np.ceil(Lx / (clm_updated.hL * cgm_updated.rGL))) + cgm_updated.p
     nPtsY = nPtsX
-    nPtsZ = int(np.ceil(HeightG / hG_bf)) + 1
+    nPtsZ = int(np.ceil(Lz / (clm_updated.hL * cgm_updated.rGL))) + cgm_updated.r
+    # Recalculate mesh parameters
+    # hG_bf = cgm.mu_G * clm.hL * cgm.rGL
+    # nPtsX = int(np.ceil(WidthG / hG_bf)) + 1
+    # nPtsY = nPtsX
+    # nPtsZ = int(np.ceil(HeightG / hG_bf)) + 1
     
     # Calculate actual element sizes
-    hGX = cgm.mu_G * WidthG / (nPtsX - 1)
-    hGY = cgm.mu_G * WidthG / (nPtsY - 1)
-    hGZ = cgm.mu_G * HeightG / (nPtsZ - 1)
-    hG = hG_bf
+    # hGX = cgm.mu_G * WidthG / (nPtsX - 1)
+    # hGY = cgm.mu_G * WidthG / (nPtsY - 1)
+    # hGZ = cgm.mu_G * HeightG / (nPtsZ - 1)
+    # hG = hG_bf

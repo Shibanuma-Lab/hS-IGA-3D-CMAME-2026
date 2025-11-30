@@ -29,15 +29,15 @@ class GlobalMesh:
         self.nPtsZ = sp.nPtsZ
         
         # Element size
-        if sp.static_mode:
-            # Static mode: use non-uniform spacing
-            self.hGx = sp.hGX
-            self.hGy = sp.hGY
-            self.hGz = sp.hGZ
-            self.hG = sp.hG  # Keep for compatibility
-        else:
-            # Dynamic mode: uniform spacing
-            self.hG = sp.hG
+        # if sp.static_mode:
+        #     # Static mode: use non-uniform spacing
+        #     self.hGx = sp.hGX
+        #     self.hGy = sp.hGY
+        #     self.hGz = sp.hGZ
+        #     self.hG = sp.hG  # Keep for compatibility
+        # else:
+        #     # Dynamic mode: uniform spacing
+        #     self.hG = sp.hG
         
         # Mesh data
         self.nodeG = None
@@ -65,18 +65,72 @@ class GlobalMesh:
         def ad(x):
             return 0.0 if abs(x) < 1e-9 * sp.WidthG else x
         
-        # 1. Generate nodal coordinates (control points)
-        if sp.static_mode:
-            # Static mode: non-uniform element spacing
-            nodeGx = self.hGx * np.arange(self.nPtsX)
-            nodeGy = self.hGy * np.arange(self.nPtsY)
-            nodeGz = self.hGz * np.arange(self.nPtsZ)
-        else:
-            # Dynamic mode: uniform element spacing
-            nodeGx = self.hG * np.arange(self.nPtsX)
-            nodeGy = self.hG * np.arange(self.nPtsY)
-            nodeGz = self.hG * np.arange(self.nPtsZ)
+        # 1. Generate knot vectors
+        # For open B-spline: repeat first and last knots (p+1) times
+        knotUTemp = np.linspace(0, 1, self.nPtsX - self.p + 1)
+        knotVTemp = np.linspace(0, 1, self.nPtsY - self.q + 1)
+        knotWTemp = np.linspace(0, 1, self.nPtsZ - self.r + 1)
         
+        # Add repeated knots at boundaries
+        self.uKnot = np.concatenate([[0, 0], knotUTemp, [1, 1]])
+        self.vKnot = np.concatenate([[0, 0], knotVTemp, [1, 1]])
+        self.wKnot = np.concatenate([[0, 0], knotWTemp, [1, 1]])
+        
+        logger.info(f"Knot vectors: U={len(self.uKnot)}, V={len(self.vKnot)}, W={len(self.wKnot)}")
+
+        # 2. Generate nodal coordinates (control points)
+        uniqU = np.unique(self.uKnot)
+        uniqV = np.unique(self.vKnot)
+        uniqW = np.unique(self.wKnot)
+        
+        nelemU = len(uniqU) - 1
+        nelemV = len(uniqV) - 1
+        nelemW = len(uniqW) - 1
+
+        # if sp.static_mode:
+        #     # Lx  = nelemU * self.hGx
+        #     # Ly  = nelemV * self.hGy
+        #     # Lz  = nelemW * self.hGz
+        #     Lx = sp.Lx
+        #     Ly = sp.Ly
+        #     Lz = sp.Lz
+        # else:
+        #     # Lx = nelemU * self.hG
+        #     # Ly = nelemV * self.hG
+        #     # Lz = nelemW * self.hG
+        #     Lx = sp.Lx
+        #     Ly = sp.Ly
+        #     Lz = sp.Lz
+
+        Lx = sp.Lx
+        Ly = sp.Ly
+        Lz = sp.Lz
+
+        nodeGx = np.zeros(self.nPtsX)
+        for i in range(self.nPtsX):
+            if i == 0:
+                nodeGx[i] = 0.0
+            if i == self.nPtsX - 1:
+                nodeGx[i] = Lx
+            if 0 < i < self.nPtsX - 1:
+                nodeGx[i] = Lx * (2 * i - 1) / (2 * nelemU)
+        nodeGy = np.zeros(self.nPtsY)
+        for j in range(self.nPtsY):
+            if j == 0:
+                nodeGy[j] = 0.0
+            if j == self.nPtsY - 1:
+                nodeGy[j] = Ly
+            if 0 < j < self.nPtsY - 1:
+                nodeGy[j] = Ly * (2 * j - 1) / (2 * nelemV)
+        nodeGz = np.zeros(self.nPtsZ)
+        for k in range(self.nPtsZ):
+            if k == 0:
+                nodeGz[k] = 0.0
+            if k == self.nPtsZ - 1:
+                nodeGz[k] = Lz
+            if 0 < k < self.nPtsZ - 1:
+                nodeGz[k] = Lz * (2 * k - 1) / (2 * nelemW)
+
         # Create 2D grid for XY plane
         nodeGxy = []
         for y in nodeGy:
@@ -94,19 +148,6 @@ class GlobalMesh:
         nnodeG = len(self.nodeG)
         
         logger.info(f"Control points generated: {nnodeG} nodes")
-        
-        # 2. Generate knot vectors
-        # For open B-spline: repeat first and last knots (p+1) times
-        knotUTemp = np.linspace(0, 1, self.nPtsX - self.p + 1)
-        knotVTemp = np.linspace(0, 1, self.nPtsY - self.q + 1)
-        knotWTemp = np.linspace(0, 1, self.nPtsZ - self.r + 1)
-        
-        # Add repeated knots at boundaries
-        self.uKnot = np.concatenate([[0, 0], knotUTemp, [1, 1]])
-        self.vKnot = np.concatenate([[0, 0], knotVTemp, [1, 1]])
-        self.wKnot = np.concatenate([[0, 0], knotWTemp, [1, 1]])
-        
-        logger.info(f"Knot vectors: U={len(self.uKnot)}, V={len(self.vKnot)}, W={len(self.wKnot)}")
         
         # 3. Generate weights (all 1.0 for B-spline)
         self.weights = np.ones(self.nPtsX * self.nPtsY * self.nPtsZ)
