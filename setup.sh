@@ -51,15 +51,25 @@ print_info() {
 # ============================================================================
 print_header "Step 1: Checking Directory Structure"
 
-if [ ! -d "sfem_linear" ] || [ ! -d "circular_crack" ]; then
-    print_error "Required directories not found!"
-    print_info "Please ensure you are in the project root directory with:"
-    print_info "  - sfem_linear/"
-    print_info "  - circular_crack/"
+if [ ! -d "circular_crack" ]; then
+    print_error "circular_crack directory not found!"
+    print_info "Please ensure you are in the project root directory"
     exit 1
 fi
 
-print_success "Directory structure verified"
+print_success "circular_crack directory verified"
+
+# Check if sfem_linear exists and is empty
+if [ -d "sfem_linear" ]; then
+    if [ -z "$(ls -A sfem_linear)" ]; then
+        print_warning "sfem_linear directory is empty. Removing..."
+        rmdir sfem_linear
+        print_success "Empty sfem_linear directory removed"
+    else
+        print_info "sfem_linear directory exists with content"
+    fi
+fi
+
 echo ""
 
 # ============================================================================
@@ -197,17 +207,119 @@ fi
 echo ""
 
 # ============================================================================
-# Step 6: Build Fortran Solver (Optional)
+# Step 6: Install and Build Fortran Solver
 # ============================================================================
-print_header "Step 6: Fortran Solver Check"
+print_header "Step 6: Installing Fortran Solver"
 
 SOLVER_BIN="sfem_linear/bin/sfem_linear"
-if [ -f "$SOLVER_BIN" ]; then
-    print_success "Fortran solver binary exists: $SOLVER_BIN"
+
+# Check if sfem_linear directory exists
+if [ ! -d "sfem_linear" ]; then
+    print_warning "sfem_linear directory not found. Cloning from GitLab..."
+    
+    # Check if git is available
+    if ! command -v git &> /dev/null; then
+        print_error "git is not installed!"
+        print_info "Please install git: sudo apt install git"
+        exit 1
+    fi
+    
+    print_info "Cloning sfem_linear repository..."
+    if git clone git@gitlab.com:morita/sfem_linear.git; then
+        print_success "sfem_linear repository cloned successfully"
+    else
+        print_error "Failed to clone sfem_linear repository!"
+        print_info "Please ensure you have SSH access to gitlab.com:morita/sfem_linear.git"
+        print_info "Or manually clone the repository and re-run this script"
+        exit 1
+    fi
+    
+    # Enter the directory and checkout the correct branch
+    cd sfem_linear
+    print_info "Switching to branch: tianyu_IGA"
+    if git checkout tianyu_IGA; then
+        print_success "Switched to branch tianyu_IGA"
+    else
+        print_error "Failed to checkout branch tianyu_IGA!"
+        cd ..
+        exit 1
+    fi
+    
+    # Run install script if it exists
+    if [ -f "install_lib.sh" ]; then
+        print_info "Running install_lib.sh..."
+        if bash install_lib.sh; then
+            print_success "install_lib.sh completed"
+        else
+            print_warning "install_lib.sh encountered issues (this may be normal)"
+        fi
+    else
+        print_warning "install_lib.sh not found, skipping..."
+    fi
+    
+    # Build the solver
+    print_info "Building solver with make..."
+    if make -j$(nproc); then
+        print_success "Solver built successfully!"
+    else
+        print_error "Failed to build solver!"
+        print_info "Please check the build errors above"
+        cd ..
+        exit 1
+    fi
+    
+    # Return to project root
+    cd ..
+    
+elif [ ! -f "$SOLVER_BIN" ]; then
+    # Directory exists but binary doesn't - try to build
+    print_warning "Solver binary not found. Attempting to build..."
+    
+    cd sfem_linear
+    
+    # Check if we're on the correct branch
+    CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+    if [ "$CURRENT_BRANCH" != "tianyu_IGA" ]; then
+        print_info "Switching to branch: tianyu_IGA"
+        git checkout tianyu_IGA || print_warning "Could not switch branch"
+    fi
+    
+    # Run install script if it exists
+    if [ -f "install_lib.sh" ]; then
+        print_info "Running install_lib.sh..."
+        bash install_lib.sh || print_warning "install_lib.sh encountered issues"
+    fi
+    
+    # Build the solver
+    print_info "Building solver with make..."
+    if make -j$(nproc); then
+        print_success "Solver built successfully!"
+    else
+        print_error "Failed to build solver!"
+        cd ..
+        exit 1
+    fi
+    
+    cd ..
 else
-    print_warning "Fortran solver binary not found"
-    print_info "If you need to build the solver, run:"
+    print_success "Fortran solver binary exists: $SOLVER_BIN"
+fi
+
+# Verify the binary is executable
+if [ -f "$SOLVER_BIN" ]; then
+    if [ -x "$SOLVER_BIN" ]; then
+        print_success "Solver is ready to use"
+    else
+        print_warning "Making solver executable..."
+        chmod +x "$SOLVER_BIN"
+        print_success "Solver permissions updated"
+    fi
+else
+    print_error "Solver binary still not found after build attempt!"
+    print_info "You may need to manually build sfem_linear:"
     print_info "  cd sfem_linear"
+    print_info "  git checkout tianyu_IGA"
+    print_info "  bash install_lib.sh"
     print_info "  make"
 fi
 
