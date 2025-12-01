@@ -257,18 +257,16 @@ if [ ! -d "sfem_linear" ]; then
         print_warning "install_lib.sh not found, skipping..."
     fi
     
-    # Build the solver
+    # Build the solver (sequential build to avoid Fortran module dependency issues)
     print_info "Building solver with make..."
-    if make -j$(nproc); then
-        print_success "Solver built successfully!"
+    if make; then
+      print_success "Solver built successfully!"
     else
-        print_error "Failed to build solver!"
-        print_info "Please check the build errors above"
-        cd ..
-        exit 1
-    fi
-    
-    # Return to project root
+      print_error "Failed to build solver!"
+      print_info "Please check the build errors above"
+      cd ..
+      exit 1
+    fi    # Return to project root
     cd ..
     
 elif [ ! -f "$SOLVER_BIN" ]; then
@@ -290,14 +288,14 @@ elif [ ! -f "$SOLVER_BIN" ]; then
         bash install_lib.sh || print_warning "install_lib.sh encountered issues"
     fi
     
-    # Build the solver
+    # Build the solver (sequential build to avoid Fortran module dependency issues)
     print_info "Building solver with make..."
-    if make -j$(nproc); then
-        print_success "Solver built successfully!"
+    if make; then
+      print_success "Solver built successfully!"
     else
-        print_error "Failed to build solver!"
-        cd ..
-        exit 1
+      print_error "Failed to build solver!"
+      cd ..
+      exit 1
     fi
     
     cd ..
