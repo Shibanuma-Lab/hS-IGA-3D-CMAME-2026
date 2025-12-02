@@ -137,6 +137,39 @@ if command -v pipenv &> /dev/null; then
 else
     print_warning "Pipenv not found. Installing..."
     
+    # Check if pip is available for Python 3.10
+    if ! python3.10 -m pip --version &> /dev/null; then
+        print_warning "pip not found for Python 3.10. Installing..."
+        
+        # Try to install pip via apt first (works for system Python)
+        if python3.10 --version | grep -q "3.10"; then
+            print_info "Installing python3.10-pip via apt..."
+            sudo apt update
+            sudo apt install -y python3.10-venv python3.10-distutils
+            
+            # Download and install pip using get-pip.py
+            print_info "Installing pip using get-pip.py..."
+            cd /tmp
+            wget -q https://bootstrap.pypa.io/get-pip.py
+            python3.10 get-pip.py --user
+            rm get-pip.py
+            cd "$OLDPWD"
+            
+            # Update PATH for current session
+            export PATH="$HOME/.local/bin:$PATH"
+            
+            if python3.10 -m pip --version &> /dev/null; then
+                print_success "pip installed successfully!"
+            else
+                print_error "Failed to install pip for Python 3.10!"
+                print_info "Please install pip manually:"
+                print_info "  sudo apt install python3-pip"
+                print_info "  or download: wget https://bootstrap.pypa.io/get-pip.py && python3.10 get-pip.py"
+                exit 1
+            fi
+        fi
+    fi
+    
     print_info "Installing Pipenv..."
     python3.10 -m pip install --user pipenv
     
