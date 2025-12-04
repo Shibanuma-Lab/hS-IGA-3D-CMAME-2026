@@ -32,31 +32,42 @@ def _load_interpolator():
     # Get the directory where this file is located
     current_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # Priority 1: Try Mathematica .mat file (most accurate)
-    mat_file = os.path.join(current_dir, 'sneddon_SA.mat')
-    if os.path.exists(mat_file):
-        from sneddon_precompute import load_interpolation_data
-        _sneddon_interpolator, _sneddon_c = load_interpolation_data(mat_file)
-        return _sneddon_interpolator, _sneddon_c
+    # Import simulation parameters to get data source preference
+    try:
+        import sys
+        sys.path.insert(0, current_dir)
+        from const import simulation_params as sp
+        data_source = sp.sneddon_data_source
+    except (ImportError, AttributeError):
+        # Default to Mathematica if parameter not found
+        data_source = 'mathematica'
     
-    # Priority 2: Try Python .npz file
-    data_file = os.path.join(current_dir, 'sneddon_interpolation.npz')
-    if not os.path.exists(data_file):
-        # Fall back to test data
-        data_file = os.path.join(current_dir, 'sneddon_interpolation_test.npz')
-        if not os.path.exists(data_file):
+    # Select data file based on user preference
+    if data_source == 'python':
+        # Use Python-generated data
+        mat_file = os.path.join(current_dir, 'sneddon_python.mat')
+        if not os.path.exists(mat_file):
             raise FileNotFoundError(
-                f"Sneddon interpolation data not found!\n"
+                f"Python-generated Sneddon data not found!\n"
+                f"Expected: {mat_file}\n"
+                f"Please run: python generate_sneddon_python.py\n"
+                f"Or set: sneddon_data_source = 'mathematica' in simulation_params.py"
+            )
+    else:
+        # Use Mathematica data (default)
+        mat_file = os.path.join(current_dir, 'sneddon_SA.mat')
+        if not os.path.exists(mat_file):
+            raise FileNotFoundError(
+                f"Mathematica Sneddon data not found!\n"
+                f"Expected: {mat_file}\n"
                 f"Please either:\n"
-                f"  1. Export from Mathematica: sneddon_SA.mat\n"
-                f"  2. Run: python sneddon_precompute.py\n"
-                f"Expected locations:\n"
-                f"  {current_dir}/sneddon_SA.mat (preferred)\n"
-                f"  {current_dir}/sneddon_interpolation.npz"
+                f"  1. Export from Mathematica as sneddon_SA.mat\n"
+                f"  2. Use Python data: set sneddon_data_source = 'python'"
             )
     
+    # Load the selected data file
     from sneddon_precompute import load_interpolation_data
-    _sneddon_interpolator, _sneddon_c = load_interpolation_data(data_file)
+    _sneddon_interpolator, _sneddon_c = load_interpolation_data(mat_file)
     
     return _sneddon_interpolator, _sneddon_c
 

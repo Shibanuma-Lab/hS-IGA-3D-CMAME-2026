@@ -206,39 +206,51 @@ cython_debug/
 # Circular Crack Project - Ignore Rules
 # ============================================================================
 
-# Sneddon interpolation data (npz files not needed, use .mat instead)
-circular_crack/*.npz
+# Sneddon interpolation data files
+circular_crack/*.npz                      # Old numpy format (deprecated)
+circular_crack/sneddon_python_test.mat    # Test data (not for production)
+circular_crack/sneddon_interpolation*.npz # Temporary interpolation files
 
-# Debug and documentation markdown files (keep only README.md)
-# In circular_crack directory
+# Debug and documentation markdown files (keep only essential ones)
+# In circular_crack directory - ignore all debug MD files
 circular_crack/*.md
-!circular_crack/README.md
+!circular_crack/README.md                 # Keep if it exists in future
 
-# In root directory (keep only README.md)
+# In root directory (keep only README.md and essential docs)
 *.md
 !README.md
+!INSTALL.md
+!QUICKSTART.md
+!STATIC_MODE_GUIDE.md
+!STATIC_MODE_TEST_REPORT.md
 
 # Mathematica notebooks used for debugging/reference
 circular_crack/*.nb
 circular_crack/export_sneddon_data.nb
+circular_crack/Circular*.nb
 
 # Test and debug Python scripts
 circular_crack/test_*.py
 circular_crack/*_test.py
+circular_crack/compare_sneddon_data.py    # Comparison tool (dev only)
 
 # CSV and Excel result files from debugging
 circular_crack/*.csv
 circular_crack/*.xlsx
+circular_crack/*.log
+circular_crack/comparison_output.log
 
 # Shell scripts for data generation (already executed)
 circular_crack/generate_*.sh
 circular_crack/*.sh
 
-# BC reference data from Mathematica (for comparison only, not needed in production)
+# Reference data files from Mathematica (for comparison only)
 circular_crack/bc.g.ma.dat
+circular_crack/SA_coarse_*.dat
 
-# Keep the essential Mathematica data file (REQUIRED for running)
-!circular_crack/sneddon_SA.mat
+# Keep the essential data files (REQUIRED for running)
+!circular_crack/sneddon_SA.mat            # Mathematica reference data
+!circular_crack/sneddon_python.mat        # Python-generated data
 
 # Credentials
 credentials
