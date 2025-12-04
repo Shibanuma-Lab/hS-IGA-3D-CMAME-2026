@@ -207,14 +207,17 @@ cython_debug/
 # ============================================================================
 
 # Sneddon interpolation data files
-circular_crack/*.npz                      # Old numpy format (deprecated)
-circular_crack/sneddon_python_test.mat    # Test data (not for production)
-circular_crack/sneddon_interpolation*.npz # Temporary interpolation files
+# Old numpy format (deprecated)
+circular_crack/*.npz
+circular_crack/sneddon_interpolation*.npz
+# Test data (not for production)
+circular_crack/sneddon_python_test.mat
 
 # Debug and documentation markdown files (keep only essential ones)
 # In circular_crack directory - ignore all debug MD files
 circular_crack/*.md
-!circular_crack/README.md                 # Keep if it exists in future
+# Keep if it exists in future
+!circular_crack/README.md
 
 # In root directory (keep only README.md)
 *.md
@@ -228,7 +231,8 @@ circular_crack/Circular*.nb
 # Test and debug Python scripts
 circular_crack/test_*.py
 circular_crack/*_test.py
-circular_crack/compare_sneddon_data.py    # Comparison tool (dev only)
+# Comparison tool (dev only)
+circular_crack/compare_sneddon_data.py
 
 # CSV and Excel result files from debugging
 circular_crack/*.csv
@@ -245,8 +249,10 @@ circular_crack/bc.g.ma.dat
 circular_crack/SA_coarse_*.dat
 
 # Keep the essential data files (REQUIRED for running)
-!circular_crack/sneddon_SA.mat            # Mathematica reference data
-!circular_crack/sneddon_python.mat        # Python-generated data
+# Mathematica reference data
+!circular_crack/sneddon_SA.mat
+# Python-generated data
+!circular_crack/sneddon_python.mat
 
 # Credentials
 credentials
