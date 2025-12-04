@@ -216,13 +216,9 @@ circular_crack/sneddon_interpolation*.npz # Temporary interpolation files
 circular_crack/*.md
 !circular_crack/README.md                 # Keep if it exists in future
 
-# In root directory (keep only README.md and essential docs)
+# In root directory (keep only README.md)
 *.md
 !README.md
-!INSTALL.md
-!QUICKSTART.md
-!STATIC_MODE_GUIDE.md
-!STATIC_MODE_TEST_REPORT.md
 
 # Mathematica notebooks used for debugging/reference
 circular_crack/*.nb
