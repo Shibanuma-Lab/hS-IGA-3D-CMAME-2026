@@ -388,30 +388,6 @@ nohup python3 generate_sneddon_python.py > generation.log 2>&1 &
 python3 generate_sneddon_python.py --test
 ```
 
-The generator uses:
-- Pure `scipy.integrate.quad` with adaptive parameters
-- 7-stage adaptive strategy optimized for near-crack-tip accuracy
-- Multiprocessing with 24 CPU cores (~16x speedup)
-- Output: Mathematica-compatible `.mat` format
-
-### 📐 Sneddon Formula
-
-For a penny-shaped crack of radius `a` under remote stress `σ`:
-
-**Radial displacement:**
-```
-u_r = (2σa(1+ν))/(πE) × [(1-2ν)I₁(r,z) - I₂(r,z)]
-```
-
-**Vertical displacement:**
-```
-u_z = -(4σa(1-ν²))/(πE) × [I₁(r,z) + I₂(r,z)/(2(1-ν))]
-```
-
-Where `I₁` and `I₂` are Bessel function integrals precomputed on the (r,z) grid.
-
-**Note:** The `(1+ν)` factor in `u_r` accounts for axisymmetric hoop strain effects (ε_θ = u_r/r).
-
 ## 📚 References
 
 1. Hughes, T.J.R. et al. "Isogeometric Analysis: CAD, Finite Elements, NURBS, Exact Geometry and Mesh Refinement." *Computer Methods in Applied Mechanics and Engineering*, 2005.
