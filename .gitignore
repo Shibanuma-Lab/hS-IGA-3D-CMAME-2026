@@ -256,3 +256,10 @@ circular_crack/SA_coarse_*.dat
 
 # Credentials
 credentials
+
+# ============================================================================
+# Git management scripts (local only)
+# ============================================================================
+# These scripts manage const file tracking but shouldn't be in repo
+# ignore_const_changes.sh
+# restore_const_tracking.sh
