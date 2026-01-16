@@ -15,7 +15,7 @@ Usage:
     python generate_sneddon_python.py [--test]
     
     --test: Generate low-resolution test data (120x40 grid)
-    (default): Generate full-resolution data (601x201 grid)
+    (default): Generate full-resolution data (701x301 grid)
 
 Based on Sneddon (1946) and optimized integration strategy from previous experiments.
 """
@@ -197,20 +197,20 @@ def compute_integrals_single_point(args):
     return (idx, ur1, ur2, uz1, uz2)
 
 
-def generate_sneddon_data_parallel(WG=3.0, HG=1.0, nW=600, nH=200, c=1.0, n_processes=24):
+def generate_sneddon_data_parallel(WG=3.5, HG=1.5, nW=700, nH=300, c=1.0, n_processes=24):
     """
     Generate Sneddon integral data using parallel computation
     
     Parameters:
     -----------
     WG : float
-        Domain width in r-direction (default: 3.0)
+        Domain width in r-direction (default: 3.5)
     HG : float
-        Domain height in z-direction (default: 1.0)
+        Domain height in z-direction (default: 1.5)
     nW : int
-        Number of points in r-direction (default: 600)
+        Number of points in r-direction (default: 700)
     nH : int
-        Number of points in z-direction (default: 200)
+        Number of points in z-direction (default: 300)
     c : float
         Crack radius (default: 1.0)
     n_processes : int
@@ -343,14 +343,14 @@ def main():
         
     else:
         logger.info("Running in FULL mode (high resolution)")
-        logger.info("This will take approximately 30-60 minutes...")
+        logger.info("This will take approximately 50-105 minutes...")
         logger.info("")
         
-        # Full resolution parameters (matching Mathematica)
-        WG = 3.0
-        HG = 1.0
-        nW = 600  # 601 points
-        nH = 200  # 201 points
+        # Full resolution parameters (expanded domain)
+        WG = 3.5
+        HG = 1.5
+        nW = 700  # 701 points
+        nH = 300  # 301 points
         c = 1.0
         output_file = 'sneddon_python.mat'
         n_processes = 24

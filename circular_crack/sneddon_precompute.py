@@ -14,6 +14,54 @@ import os
 from utils.logger import logger
 
 
+class BoundaryCheckInterpolator:
+    """
+    Wrapper for RegularGridInterpolator that warns when points are outside domain
+    """
+    def __init__(self, interpolator, r_bounds, z_bounds, source='MAT file'):
+        self.interpolator = interpolator
+        self.r_min, self.r_max = r_bounds
+        self.z_min, self.z_max = z_bounds
+        self.source = source
+        self._warning_issued = False
+        
+    def __call__(self, points):
+        """Call interpolator with boundary checking"""
+        # Convert to array if needed
+        points = np.asarray(points)
+        
+        # Check if point is outside domain
+        if points.ndim == 1:
+            r, z = points
+            if (r < self.r_min or r > self.r_max or z < self.z_min or z > self.z_max):
+                if not self._warning_issued:
+                    logger.warning(f"⚠ INTERPOLATION WARNING: Point outside {self.source} domain!")
+                    logger.warning(f"  Domain: r ∈ [{self.r_min}, {self.r_max}], z ∈ [{self.z_min}, {self.z_max}]")
+                    logger.warning(f"  Point: r={r:.4f}, z={z:.4f}")
+                    logger.warning(f"  Using extrapolation (reduced accuracy)")
+                    logger.warning(f"  Consider regenerating MAT file with larger domain")
+                    self._warning_issued = True
+        else:
+            # Check multiple points
+            rs = points[:, 0]
+            zs = points[:, 1]
+            out_of_bounds = ((rs < self.r_min) | (rs > self.r_max) | 
+                           (zs < self.z_min) | (zs > self.z_max))
+            if np.any(out_of_bounds) and not self._warning_issued:
+                n_out = np.sum(out_of_bounds)
+                r_max_actual = np.max(rs)
+                z_max_actual = np.max(zs)
+                logger.warning(f"⚠ INTERPOLATION WARNING: {n_out} points outside {self.source} domain!")
+                logger.warning(f"  Domain: r ∈ [{self.r_min}, {self.r_max}], z ∈ [{self.z_min}, {self.z_max}]")
+                logger.warning(f"  Actual range: r ∈ [0, {r_max_actual:.4f}], z ∈ [0, {z_max_actual:.4f}]")
+                logger.warning(f"  Using extrapolation for out-of-bounds points (reduced accuracy)")
+                logger.warning(f"  Consider regenerating MAT file with larger domain")
+                self._warning_issued = True
+                
+        # Call the actual interpolator
+        return self.interpolator(points)
+
+
 def CS(eta):
     """
     Helper function: CS(η) = Cos(η)/η - Sin(η)/η²
@@ -162,13 +210,21 @@ def precompute_sneddon_data(WG=3.0, HG=1.0, nW=600, nH=200, c=1.0):
     
     logger.info("Precomputation complete!")
     
-    # Create interpolator
-    interpolator = RegularGridInterpolator(
+    # Create base interpolator
+    base_interpolator = RegularGridInterpolator(
         (r_grid, z_grid), 
         data,
         method='linear',  # Linear interpolation (InterpolationOrder->1 in Mathematica)
         bounds_error=False,
         fill_value=None  # Extrapolate if needed
+    )
+    
+    # Wrap with boundary checking
+    interpolator = BoundaryCheckInterpolator(
+        base_interpolator,
+        r_bounds=(0, WG),
+        z_bounds=(0, HG),
+        source='precomputed data'
     )
     
     return interpolator, r_grid, z_grid, data
@@ -228,9 +284,11 @@ def load_interpolation_data(filename='sneddon_interpolation.npz'):
         z_grid = data_file['z_grid']
         data = data_file['data']
         c = float(data_file['c'])
+        WG = float(data_file['WG'])
+        HG = float(data_file['HG'])
         
-        # Create interpolator
-        interpolator = RegularGridInterpolator(
+        # Create base interpolator
+        base_interpolator = RegularGridInterpolator(
             (r_grid, z_grid),
             data,
             method='linear',
@@ -238,15 +296,25 @@ def load_interpolation_data(filename='sneddon_interpolation.npz'):
             fill_value=None
         )
         
+        # Wrap with boundary checking
+        interpolator = BoundaryCheckInterpolator(
+            base_interpolator,
+            r_bounds=(0, WG),
+            z_bounds=(0, HG),
+            source=f'NPZ file ({filename})'
+        )
+        
         logger.info(f"Loaded interpolation data from {filename}")
         logger.info(f"  Grid: {len(r_grid)}x{len(z_grid)}, c={c}")
+        logger.info(f"  Domain: r ∈ [0, {WG}], z ∈ [0, {HG}]")
         
         return interpolator, c
 
 
 def load_from_mathematica_mat(filename='sneddon_SA.mat'):
     """
-    Load Sneddon interpolation data from Mathematica .mat file
+    Load Sneddon interpolation data from .mat file
+    (Compatible with both Mathematica and Python-generated .mat files)
     
     The .mat file should contain:
     - posA: Nx2 array of (z, r) coordinates
@@ -266,7 +334,7 @@ def load_from_mathematica_mat(filename='sneddon_SA.mat'):
         logger.error("scipy.io.loadmat not available. Install scipy to load .mat files")
         raise
     
-    logger.info(f"Loading Mathematica data from {filename}")
+    logger.info(f"Loading Sneddon interpolation data from {filename}")
     
     # Load .mat file
     mat_data = loadmat(filename)
@@ -328,8 +396,8 @@ def load_from_mathematica_mat(filename='sneddon_SA.mat'):
     
     logger.info(f"  Reshaped data to ({nW}, {nH}, 4)")
     
-    # Create interpolator
-    interpolator = RegularGridInterpolator(
+    # Create base interpolator
+    base_interpolator = RegularGridInterpolator(
         (r_grid, z_grid),
         data,
         method='linear',
@@ -337,7 +405,18 @@ def load_from_mathematica_mat(filename='sneddon_SA.mat'):
         fill_value=None
     )
     
-    logger.info("✓ Mathematica interpolation data loaded successfully")
+    # Detect data source from filename for accurate reporting
+    source = 'Python' if 'python' in filename.lower() else 'Mathematica'
+    
+    # Wrap with boundary checking
+    interpolator = BoundaryCheckInterpolator(
+        base_interpolator,
+        r_bounds=(0, WG),
+        z_bounds=(0, HG),
+        source=f'{source} MAT file (domain: r≤{WG:.1f}, z≤{HG:.1f})'
+    )
+    
+    logger.info(f"✓ {source} interpolation data loaded successfully from .mat file")
     
     return interpolator, c
 
