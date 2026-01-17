@@ -131,7 +131,7 @@ def inverse_isoparametric_numba(point, elem_coords, tol, initial_guess):
         eta = 0.0
         zeta = 0.0
     
-    max_iter = 20
+    max_iter = 50  # Increased from 20 for better accuracy
     for iteration in range(max_iter):
         # Compute shape functions and derivatives
         N = shape_functions_numba(xi, eta, zeta)
@@ -213,7 +213,8 @@ def inverse_isoparametric_numba(point, elem_coords, tol, initial_guess):
     residual = point - x_final
     residual_norm = np.sqrt(residual[0]**2 + residual[1]**2 + residual[2]**2)
     
-    if residual_norm < tol * 10:
+    # Relaxed final check: allow up to 100x tolerance (was 10x)
+    if residual_norm < tol * 100:
         return np.array([xi, eta, zeta, 1.0], dtype=np.float64)
     else:
         return np.array([xi, eta, zeta, 0.0], dtype=np.float64)
@@ -263,7 +264,7 @@ def _worker_process_batch(args):
             
             # Compute Jacobian
             J = HexahedronElement.jacobian(dN, node_coords)
-            det_J = np.linalg.det(J)
+            det_J = np.abs(np.linalg.det(J))  # Use absolute value for integration
             
             # Physical coordinates of quadrature point
             xyz = N @ node_coords
@@ -375,7 +376,7 @@ class ElementMeshInterpolator:
         # Interpolate using H8 shape functions
         return self._interpolate_in_element(elem_idx, xi, eta, zeta)
     
-    def _find_containing_element(self, point, tol=1e-6):
+    def _find_containing_element(self, point, tol=1e-10):  # Increased from 1e-6
         """
         Find which element contains the point.
         Returns: (elem_idx, xi, eta, zeta) or (None, None, None, None)
@@ -435,7 +436,7 @@ class ElementMeshInterpolator:
         self._last_xi_eta_zeta_cache = None
         return None, None, None, None
     
-    def _inverse_isoparametric(self, point, elem_coords, tol=1e-6, initial_guess=None):
+    def _inverse_isoparametric(self, point, elem_coords, tol=1e-10, initial_guess=None):  # Increased from 1e-6
         """
         Solve inverse isoparametric mapping: find (xi, eta, zeta) such that
         point = sum_i N_i(xi, eta, zeta) * node_i
@@ -1221,7 +1222,7 @@ class L2NormCalculator:
                 
                 # Compute Jacobian
                 J = HexahedronElement.jacobian(dN, node_coords)
-                det_J = np.linalg.det(J)
+                det_J = np.abs(np.linalg.det(J))  # Use absolute value for integration
                 
                 # Physical coordinates of quadrature point
                 xyz = N @ node_coords

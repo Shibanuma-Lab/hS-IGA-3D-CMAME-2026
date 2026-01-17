@@ -231,6 +231,8 @@ circular_crack/Circular*.nb
 # Test and debug Python scripts
 circular_crack/test_*.py
 circular_crack/*_test.py
+circular_crack/*.txt
+circular_crack/debug_*.py
 # Comparison tool (dev only)
 circular_crack/compare_sneddon_data.py
 
