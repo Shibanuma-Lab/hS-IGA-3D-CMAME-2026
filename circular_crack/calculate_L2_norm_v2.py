@@ -911,7 +911,7 @@ class BackgroundMesh:
 class GaussQuadrature:
     """Gauss quadrature for integration"""
     
-    def __init__(self, order=4):
+    def __init__(self, order=5):
         """
         Initialize Gauss quadrature
         
@@ -936,11 +936,17 @@ class GaussQuadrature:
                           0.40957436820775056, 0.8302961484013275],
                 'weights': [0.3478548451374538, 0.6521451548625461,
                            0.6521451548625461, 0.3478548451374538]
+            },
+            5: {
+                'points': [-0.9061798459386640, -0.5384693101056831, 0.0,
+                          0.5384693101056831, 0.9061798459386640],
+                'weights': [0.2369268850561891, 0.4786286704993665, 0.5688888888888889,
+                           0.4786286704993665, 0.2369268850561891]
             }
         }
         
         if order not in gauss_data:
-            raise ValueError(f"Order {order} not supported. Use 2 or 4.")
+            raise ValueError(f"Order {order} not supported. Use 2, 3, 4, or 5.")
         
         self.points_1d = np.array(gauss_data[order]['points'])
         self.weights_1d = np.array(gauss_data[order]['weights'])
@@ -1152,7 +1158,7 @@ class L2NormCalculator:
         max_y = np.max(self.node_g[:, 1])
         max_z = np.max(self.node_g[:, 2])
         
-        hB = self.hL * 1.5
+        hB = self.hL / 3.0  # Decreased from 1.5 to 1/3 for higher background mesh density (smaller elements)
         
         self.bg_mesh = BackgroundMesh(hB, max_x, max_y, max_z)
     

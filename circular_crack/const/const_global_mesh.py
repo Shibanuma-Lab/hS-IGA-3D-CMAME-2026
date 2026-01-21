@@ -15,4 +15,4 @@ rz = [1.2, 2.0]  # Refinement ratios in Z
 rGL = 6  # Ratio of global to local element size (hG/hL)
 
 # Mesh scaling
-mu_G = 0.99 ** 0.5  # Global mesh size multiplier
+mu_G = 1.01 ** 0.5  # Global mesh size multiplier

@@ -259,6 +259,9 @@ circular_crack/SA_coarse_*.dat
 # Credentials
 credentials
 
+# reference about slope for L2 norm calculation
+circular_crack/crack_singularity_convergence.py
+
 # ============================================================================
 # Git management scripts (local only)
 # ============================================================================
