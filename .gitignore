@@ -213,6 +213,11 @@ circular_crack/sneddon_interpolation*.npz
 # Test data (not for production)
 circular_crack/sneddon_python_test.mat
 
+# Test files for L2 norm calculation
+circular_crack/quick_test_L2.py
+circular_crack/regenerate_sneddon_hd.py
+circular_crack/sneddon_python_ultrahd.mat
+
 # Debug and documentation markdown files (keep only essential ones)
 # In circular_crack directory - ignore all debug MD files
 circular_crack/*.md

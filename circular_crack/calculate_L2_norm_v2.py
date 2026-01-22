@@ -911,7 +911,7 @@ class BackgroundMesh:
 class GaussQuadrature:
     """Gauss quadrature for integration"""
     
-    def __init__(self, order=5):
+    def __init__(self, order=4):
         """
         Initialize Gauss quadrature
         
@@ -1158,7 +1158,7 @@ class L2NormCalculator:
         max_y = np.max(self.node_g[:, 1])
         max_z = np.max(self.node_g[:, 2])
         
-        hB = self.hL / 3.0  # Decreased from 1.5 to 1/3 for higher background mesh density (smaller elements)
+        hB = self.hL * 1.5  # Decreased from 1.5 to 1/3 for higher background mesh density (smaller elements)
         
         self.bg_mesh = BackgroundMesh(hB, max_x, max_y, max_z)
     
