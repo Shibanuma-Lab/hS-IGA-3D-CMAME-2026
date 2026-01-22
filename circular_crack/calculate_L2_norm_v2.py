@@ -1432,6 +1432,21 @@ def process_all_results(base_dir='results/verification_5_2', rGL=2,
     print(f"{'='*70}")
     print(f"Found {len(result_folders)} result folders\n")
     
+    # Determine output file path
+    if output_file is None:
+        output_file = base_path / f"L2_norm_rGL{rGL}.csv"
+    output_file = Path(output_file)
+    
+    # Create CSV file with header if it doesn't exist, or clear it if it does
+    import csv
+    fieldnames = ['rGL', 'hL', 'hG', 'dof', 'relative_L2_norm', 'sneddon_file', 'computation_time', 'timestamp']
+    with open(output_file, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+    
+    print(f"CSV file initialized: {output_file}")
+    print(f"Results will be saved incrementally after each folder\n")
+    
     results = []
     
     for i, folder in enumerate(result_folders):
@@ -1444,30 +1459,46 @@ def process_all_results(base_dir='results/verification_5_2', rGL=2,
             results.append(result)
             folder_time = time.time() - folder_start
             print(f"\n>>> Folder {folder.name} completed in {folder_time:.1f}s <<<")
+            
+            # Immediately save this result to CSV (append mode)
+            with open(output_file, 'a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writerow({
+                    'rGL': result['rGL'],
+                    'hL': result['hL'],
+                    'hG': result['hG'],
+                    'dof': result['dof'],
+                    'relative_L2_norm': result['relative_L2_norm'],
+                    'sneddon_file': result.get('sneddon_file', sneddon_file),
+                    'computation_time': result['computation_time'],
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                })
+            print(f"✓ Result saved to CSV (row {i+1}/{len(result_folders)})")
+            
         except Exception as e:
-            print(f"Error processing {folder.name}: {e}")
+            print(f"✗ Error processing {folder.name}: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Save error record to CSV
+            with open(output_file, 'a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writerow({
+                    'rGL': rGL,
+                    'hL': float('nan'),
+                    'hG': float('nan'),
+                    'dof': 0,
+                    'relative_L2_norm': float('nan'),
+                    'sneddon_file': sneddon_file,
+                    'computation_time': 0.0,
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                })
+            print(f"✓ Error record saved to CSV")
             continue
     
-    # Save results
-    if output_file is None:
-        output_file = base_path / f"L2_norm_rGL{rGL}.csv"
-    
-    # Write CSV
-    import csv
-    with open(output_file, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['rGL', 'hL', 'hG', 'dof', 'relative_L2_norm'])
-        writer.writeheader()
-        for r in results:
-            writer.writerow({
-                'rGL': r['rGL'],
-                'hL': r['hL'],
-                'hG': r['hG'],
-                'dof': r['dof'],
-                'relative_L2_norm': r['relative_L2_norm']
-            })
-    
     print(f"\n{'='*70}")
-    print(f"Results saved to: {output_file}")
+    print(f"All results saved to: {output_file}")
+    print(f"Total completed: {len(results)}/{len(result_folders)} folders")
     print(f"{'='*70}")
     
     return results
