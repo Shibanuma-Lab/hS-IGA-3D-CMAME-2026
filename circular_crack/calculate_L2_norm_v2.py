@@ -1058,6 +1058,7 @@ class L2NormCalculator:
         self.hL = self.config['hL']
         
         # Initialize Sneddon solution
+        self.sneddon_file = sneddon_file
         self.sneddon = SneddonSolution(sneddon_file, p0, c, EE, nu)
         
         # Find step directory
@@ -1068,6 +1069,7 @@ class L2NormCalculator:
         
         print(f"\nProcessing: {self.result_folder.name}")
         print(f"  hL = {self.hL:.8f}")
+        print(f"  Sneddon analytical solution: {sneddon_file}")
         print(f"  Step directory: {self.step_dir.name}")
         
         # Load mesh and displacement data
@@ -1384,6 +1386,7 @@ class L2NormCalculator:
             'hG': self.config['hG'],
             'rGL': self.config['rGL'],
             'dof': (len(self.node_g) + len(self.node_l)) * 3,
+            'sneddon_file': self.sneddon_file,
             'integral_error': integral_error,
             'integral_exact': integral_exact,
             'relative_L2_norm': relative_L2,
