@@ -1056,6 +1056,10 @@ class L2NormCalculator:
             self.config = json.load(f)
         
         self.hL = self.config['hL']
+        self.c = c  # Store crack radius for local region calculation
+        
+        # Calculate angular discretization parameter for local region
+        self.nL_theta = round((0.5 * np.pi * c) / self.hL)
         
         # Initialize Sneddon solution
         self.sneddon_file = sneddon_file
@@ -1069,6 +1073,8 @@ class L2NormCalculator:
         
         print(f"\nProcessing: {self.result_folder.name}")
         print(f"  hL = {self.hL:.8f}")
+        print(f"  c = {self.c:.6f} (crack radius)")
+        print(f"  nL_theta = {self.nL_theta} (angular discretization)")
         print(f"  Sneddon analytical solution: {sneddon_file}")
         print(f"  Step directory: {self.step_dir.name}")
         
@@ -1181,12 +1187,67 @@ class L2NormCalculator:
     
     def _is_in_local_region(self, x, y, z):
         """
-        Check if point is in local region
+        Check if point is in local region using the precise Mathematica definition.
         
-        Local region: 0.751 <= r <= 1.249, 0 <= z <= 0.25
+        Mathematica code:
+            phi = ToSphericalCoordinates[rG][[3]];
+            nLθ = Round[(0.5 π*c)/hL];
+            
+            factor = Cos[(0.5π)/(2*nLθ)] * 1/Cos[Mod[phi, (0.5π)/nLθ] - (0.5π)/(2*nLθ)]
+            
+            If[0.75*factor <= sqrt(x²+y²) <= 1.25*factor && 0 <= z <= 0.25,
+               use local interpolator,
+               use global interpolator]
+        
+        Args:
+            x, y, z: Cartesian coordinates
+            
+        Returns:
+            True if point is in local region, False otherwise
         """
+        # Z coordinate check (simple)
+        if not (0.0 <= z <= 0.25):
+            return False
+        
+        # Calculate azimuthal angle phi (angle in xy-plane)
+        phi = np.arctan2(y, x)
+        
+        # Angular discretization parameter (already computed in __init__)
+        nL_theta = self.nL_theta
+        
+        # Avoid division by zero when nL_theta is very small
+        if nL_theta == 0:
+            # Fallback to simple circular region
+            r = np.sqrt(x**2 + y**2)
+            return (0.75 <= r <= 1.25)
+        
+        # Calculate the angular factor
+        # factor = Cos[(0.5π)/(2*nLθ)] * 1/Cos[Mod[phi, (0.5π)/nLθ] - (0.5π)/(2*nLθ)]
+        half_pi = 0.5 * np.pi
+        delta_theta = half_pi / nL_theta  # Angular segment size
+        
+        # Mod operation: phi modulo delta_theta
+        phi_mod = np.mod(phi, delta_theta)
+        
+        # Calculate factor components
+        cos_term1 = np.cos(half_pi / (2 * nL_theta))
+        cos_term2 = np.cos(phi_mod - half_pi / (2 * nL_theta))
+        
+        # Avoid division by zero
+        if np.abs(cos_term2) < 1e-10:
+            # At boundaries, use simple circular check
+            r = np.sqrt(x**2 + y**2)
+            return (0.75 <= r <= 1.25)
+        
+        factor = cos_term1 / cos_term2
+        
+        # Calculate r bounds
+        r_min = 0.75 * factor
+        r_max = 1.25 * factor
+        
+        # Check if point is in local region
         r = np.sqrt(x**2 + y**2)
-        return (0.751 <= r <= 1.249) and (0.0 <= z <= 0.25)
+        return (r_min <= r <= r_max)
     
     def _get_numerical_displacement(self, x, y, z):
         """Get numerical displacement at (x, y, z)"""
@@ -1392,6 +1453,186 @@ class L2NormCalculator:
             'relative_L2_norm': relative_L2,
             'computation_time': elapsed_time
         }
+    
+    def extract_plane_errors(self, plane='xz', plane_coord=None, quadrature_order=4, tolerance=None):
+        """
+        提取指定平面上所有高斯点的误差数据，用于可视化
+        
+        Parameters:
+        -----------
+        plane : str
+            平面类型: 'xy', 'xz', 'yz'
+        plane_coord : float, optional
+            平面坐标值（对于xz平面是y值，对于xy平面是z值）
+            如果为None，自动选择最接近0的平面
+        quadrature_order : int
+            高斯积分阶数
+        tolerance : float, optional
+            判断点是否在平面上的容差，默认为背景网格尺寸的10%
+        
+        Returns:
+        --------
+        dict : {
+            'coords': (N, 2) array - 平面上点的坐标（例如xz平面返回[x, z]）
+            'relative_errors': (N,) array - 相对误差 |u_num - u_ana|²/|u_ana|²
+            'error_squared': (N,) array - |u_num - u_ana|²
+            'exact_squared': (N,) array - |u_ana|²
+            'plane_type': str - 平面类型
+            'plane_coord': float - 平面坐标值
+            'in_local_region': (N,) bool array - 是否在局部区域
+        }
+        """
+        print(f"\n{'='*70}")
+        print(f"提取 {plane.upper()} 平面上的误差数据...")
+        print(f"{'='*70}")
+        
+        # 初始化高斯积分
+        quad = GaussQuadrature(quadrature_order)
+        
+        # 确定容差
+        if tolerance is None:
+            tolerance = self.bg_mesh.hB * 0.1
+        
+        # 确定平面坐标
+        if plane_coord is None:
+            # 自动选择最接近0的高斯点平面
+            if plane == 'xz':  # y方向
+                plane_coord = self._find_nearest_gauss_plane('y', quad)
+            elif plane == 'xy':  # z方向
+                plane_coord = self._find_nearest_gauss_plane('z', quad)
+            elif plane == 'yz':  # x方向
+                plane_coord = self._find_nearest_gauss_plane('x', quad)
+            else:
+                raise ValueError(f"不支持的平面类型: {plane}")
+        
+        print(f"  平面类型: {plane.upper()}")
+        print(f"  平面坐标: {plane_coord:.6f}")
+        print(f"  容差: {tolerance:.6e}")
+        
+        # 收集平面上的高斯点数据
+        coords_list = []
+        relative_errors_list = []
+        error_squared_list = []
+        exact_squared_list = []
+        in_local_list = []
+        
+        n_elements = len(self.bg_mesh.elements)
+        n_points_found = 0
+        
+        for ie in range(n_elements):
+            elem_nodes = self.bg_mesh.elements[ie]
+            node_coords = self.bg_mesh.nodes[elem_nodes]
+            
+            # 处理该单元的所有高斯点
+            for (xi, eta, zeta), w in zip(quad.points_3d, quad.weights_3d):
+                # 计算形函数
+                N = HexahedronElement.shape_functions(xi, eta, zeta)
+                
+                # 物理坐标
+                xyz = N @ node_coords
+                x, y, z = xyz
+                
+                # 检查是否在指定平面上
+                on_plane = False
+                if plane == 'xz' and abs(y - plane_coord) < tolerance:
+                    coords = [x, z]
+                    on_plane = True
+                elif plane == 'xy' and abs(z - plane_coord) < tolerance:
+                    coords = [x, y]
+                    on_plane = True
+                elif plane == 'yz' and abs(x - plane_coord) < tolerance:
+                    coords = [y, z]
+                    on_plane = True
+                
+                if on_plane:
+                    # 获取数值解位移
+                    u_num = self._get_numerical_displacement(x, y, z)
+                    
+                    # 获取解析解位移
+                    u_ana = np.array(self.sneddon.evaluate_cartesian(x, y, z))
+                    
+                    # 计算误差
+                    error = u_num - u_ana
+                    error_sq = np.dot(error, error)
+                    exact_sq = np.dot(u_ana, u_ana)
+                    
+                    # 相对误差（避免除以零）
+                    if exact_sq > 1e-20:
+                        rel_error = error_sq / exact_sq
+                    else:
+                        rel_error = 0.0
+                    
+                    # 检查是否在局部区域
+                    in_local = self._is_in_local_region(x, y, z)
+                    
+                    coords_list.append(coords)
+                    relative_errors_list.append(rel_error)
+                    error_squared_list.append(error_sq)
+                    exact_squared_list.append(exact_sq)
+                    in_local_list.append(in_local)
+                    n_points_found += 1
+        
+        print(f"  找到 {n_points_found} 个高斯点在平面上")
+        
+        if n_points_found == 0:
+            print("  警告: 未找到任何点！")
+            return None
+        
+        # 转换为numpy数组
+        result = {
+            'coords': np.array(coords_list),
+            'relative_errors': np.array(relative_errors_list),
+            'error_squared': np.array(error_squared_list),
+            'exact_squared': np.array(exact_squared_list),
+            'plane_type': plane,
+            'plane_coord': plane_coord,
+            'in_local_region': np.array(in_local_list)
+        }
+        
+        # 统计信息
+        print(f"\n  误差统计:")
+        print(f"    最小相对误差: {np.min(result['relative_errors']):.6e}")
+        print(f"    最大相对误差: {np.max(result['relative_errors']):.6e}")
+        print(f"    平均相对误差: {np.mean(result['relative_errors']):.6e}")
+        print(f"    局部区域点数: {np.sum(result['in_local_region'])}")
+        print(f"    全局区域点数: {n_points_found - np.sum(result['in_local_region'])}")
+        print(f"{'='*70}\n")
+        
+        return result
+    
+    def _find_nearest_gauss_plane(self, direction, quad):
+        """
+        找到最接近0的高斯点平面坐标
+        
+        Parameters:
+        -----------
+        direction : str
+            方向: 'x', 'y', 'z'
+        quad : GaussQuadrature
+            高斯积分对象
+        
+        Returns:
+        --------
+        float : 最接近0的平面坐标
+        """
+        direction_idx = {'x': 0, 'y': 1, 'z': 2}[direction]
+        
+        # 获取第一个单元来计算平面位置
+        elem_nodes = self.bg_mesh.elements[0]
+        node_coords = self.bg_mesh.nodes[elem_nodes]
+        
+        # 找到所有高斯点在该方向的坐标
+        plane_coords = []
+        for (xi, eta, zeta), w in zip(quad.points_3d, quad.weights_3d):
+            N = HexahedronElement.shape_functions(xi, eta, zeta)
+            xyz = N @ node_coords
+            plane_coords.append(xyz[direction_idx])
+        
+        # 找到最接近0的值
+        plane_coords = np.array(plane_coords)
+        nearest_coord = plane_coords[np.argmin(np.abs(plane_coords))]
+        
+        return nearest_coord
 
 
 def process_all_results(base_dir='results/verification_5_2', rGL=2,
