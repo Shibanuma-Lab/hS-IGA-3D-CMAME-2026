@@ -1039,7 +1039,7 @@ class L2NormCalculator:
     """Calculate L2 norm between numerical and analytical solutions"""
     
     def __init__(self, result_folder, sneddon_file='sneddon_python.mat',
-                 p0=1.0, c=1.0, EE=100.0, nu=0.3):
+                 p0=1.0, c=1.0, EE=100.0, nu=0.3, precision_digits=None):
         """
         Initialize L2 norm calculator
         
@@ -1047,8 +1047,13 @@ class L2NormCalculator:
             result_folder: Path to result folder (str or Path)
             sneddon_file: Path to Sneddon data file
             p0, c, EE, nu: Material parameters
+            precision_digits: Number of decimal digits to keep in displacement data.
+                            None = no truncation (full precision, default)
+                            Integer = truncate to this many decimal places
+                            Example: precision_digits=7 keeps 7 digits after decimal point
         """
         self.result_folder = Path(result_folder) if isinstance(result_folder, str) else result_folder
+        self.precision_digits = precision_digits
         
         # Load configuration
         config_file = self.result_folder / "run_config.json"
@@ -1076,6 +1081,10 @@ class L2NormCalculator:
         print(f"  c = {self.c:.6f} (crack radius)")
         print(f"  nL_theta = {self.nL_theta} (angular discretization)")
         print(f"  Sneddon analytical solution: {sneddon_file}")
+        if self.precision_digits is not None:
+            print(f"  ⚠️  精度截断: 保留 {self.precision_digits} 位有效数字")
+        else:
+            print(f"  精度: 完整精度（无截断）")
         print(f"  Step directory: {self.step_dir.name}")
         
         # Load mesh and displacement data
@@ -1087,6 +1096,22 @@ class L2NormCalculator:
         # Create interpolators
         self._create_interpolators()
     
+    def _truncate_precision(self, data, digits):
+        """
+        截断数组精度到指定小数位数
+        
+        Args:
+            data: numpy array
+            digits: 保留的小数位数
+        
+        Returns:
+            截断后的数组
+        """
+        if digits is None:
+            return data
+        
+        return np.round(data, decimals=digits)
+    
     def _load_data(self):
         """Load node coordinates and displacement data"""
         # Load global nodes and displacements
@@ -1095,6 +1120,14 @@ class L2NormCalculator:
         
         self.node_g = np.loadtxt(node_g_file, skiprows=1, usecols=(1, 2, 3))
         self.u_g = np.loadtxt(u_g_file, skiprows=1, usecols=(1, 2, 3))
+        
+        # 应用精度截断（如果指定）
+        if self.precision_digits is not None:
+            print(f"  截断全局位移数据精度（有效数字）...")
+            original_sample = self.u_g[0, 0] if len(self.u_g) > 0 else 0.0
+            self.u_g = self._truncate_precision(self.u_g, self.precision_digits)
+            truncated_sample = self.u_g[0, 0] if len(self.u_g) > 0 else 0.0
+            print(f"    示例（{self.precision_digits}位有效数字）: {original_sample:.15e} → {truncated_sample:.10e}")
         
         # Reconstruct global mesh elements from structured grid
         # Global nodes are arranged in (x, y, z) order
@@ -1107,6 +1140,14 @@ class L2NormCalculator:
         
         self.node_l = np.loadtxt(node_l_file, skiprows=1, usecols=(1, 2, 3))
         self.u_gl_l = np.loadtxt(u_gl_l_file, skiprows=1, usecols=(1, 2, 3))
+        
+        # 应用精度截断（如果指定）
+        if self.precision_digits is not None:
+            print(f"  截断局部位移数据精度（有效数字）...")
+            original_sample = self.u_gl_l[0, 0] if len(self.u_gl_l) > 0 else 0.0
+            self.u_gl_l = self._truncate_precision(self.u_gl_l, self.precision_digits)
+            truncated_sample = self.u_gl_l[0, 0] if len(self.u_gl_l) > 0 else 0.0
+            print(f"    示例（{self.precision_digits}位有效数字）: {original_sample:.15e} → {truncated_sample:.10e}")
         
         # Load local elements (already H8 format)
         elem_l_full = np.loadtxt(elem_l_file, skiprows=1, dtype=int)
@@ -1448,6 +1489,7 @@ class L2NormCalculator:
             'rGL': self.config['rGL'],
             'dof': (len(self.node_g) + len(self.node_l)) * 3,
             'sneddon_file': self.sneddon_file,
+            'precision_digits': self.precision_digits,  # 记录使用的精度
             'integral_error': integral_error,
             'integral_exact': integral_exact,
             'relative_L2_norm': relative_L2,
@@ -1637,7 +1679,7 @@ class L2NormCalculator:
 
 def process_all_results(base_dir='results/verification_5_2', rGL=2,
                        sneddon_file='sneddon_python.mat',
-                       output_file=None):
+                       output_file=None, precision_digits=None):
     """
     Process all result folders for a given rGL value
     
@@ -1646,6 +1688,7 @@ def process_all_results(base_dir='results/verification_5_2', rGL=2,
         rGL: rGL value to process
         sneddon_file: Path to Sneddon data file
         output_file: Output CSV file (optional)
+        precision_digits: Number of significant figures to keep (None = full precision)
     """
     base_path = Path(base_dir)
     rGL_folder = base_path / f"rGL{rGL}_0.25"
@@ -1670,17 +1713,22 @@ def process_all_results(base_dir='results/verification_5_2', rGL=2,
     
     print(f"\n{'='*70}")
     print(f"Processing rGL = {rGL} (coarse to fine mesh)")
+    if precision_digits is not None:
+        print(f"⚠️  精度截断模式: 保留 {precision_digits} 位有效数字")
     print(f"{'='*70}")
     print(f"Found {len(result_folders)} result folders\n")
     
     # Determine output file path
     if output_file is None:
-        output_file = base_path / f"L2_norm_rGL{rGL}.csv"
+        if precision_digits is not None:
+            output_file = base_path / f"L2_norm_rGL{rGL}_prec{precision_digits}.csv"
+        else:
+            output_file = base_path / f"L2_norm_rGL{rGL}.csv"
     output_file = Path(output_file)
     
     # Create CSV file with header if it doesn't exist, or clear it if it does
     import csv
-    fieldnames = ['rGL', 'hL', 'hG', 'dof', 'relative_L2_norm', 'sneddon_file', 'computation_time', 'timestamp']
+    fieldnames = ['rGL', 'hL', 'hG', 'dof', 'relative_L2_norm', 'sneddon_file', 'precision_digits', 'computation_time', 'timestamp']
     with open(output_file, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -1695,7 +1743,8 @@ def process_all_results(base_dir='results/verification_5_2', rGL=2,
         folder_start = time.time()
         
         try:
-            calc = L2NormCalculator(folder, sneddon_file=sneddon_file)
+            calc = L2NormCalculator(folder, sneddon_file=sneddon_file, 
+                                   precision_digits=precision_digits)
             result = calc.calculate(quadrature_order=4)
             results.append(result)
             folder_time = time.time() - folder_start
@@ -1711,6 +1760,7 @@ def process_all_results(base_dir='results/verification_5_2', rGL=2,
                     'dof': result['dof'],
                     'relative_L2_norm': result['relative_L2_norm'],
                     'sneddon_file': result.get('sneddon_file', sneddon_file),
+                    'precision_digits': result.get('precision_digits', None),
                     'computation_time': result['computation_time'],
                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 })
@@ -1773,6 +1823,13 @@ def main():
         type=str,
         help='Output CSV file (default: auto-generated)'
     )
+    parser.add_argument(
+        '--precision-digits',
+        type=int,
+        default=None,
+        help='Truncate displacement data to N significant figures (default: None, full precision). '
+             'Example: --precision-digits 7 keeps only 7 significant figures (e.g., 1.234567e-5)'
+    )
     
     args = parser.parse_args()
     
@@ -1780,7 +1837,8 @@ def main():
         base_dir=args.base_dir,
         rGL=args.rGL,
         sneddon_file=args.sneddon_file,
-        output_file=args.output
+        output_file=args.output,
+        precision_digits=args.precision_digits
     )
 
 
