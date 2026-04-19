@@ -12,6 +12,7 @@ import scipy.io as sio
 from scipy.interpolate import LinearNDInterpolator
 from scipy.spatial import Delaunay, cKDTree
 from scipy.optimize import fsolve, minimize
+from numpy.polynomial.legendre import leggauss
 import json
 import os
 from pathlib import Path
@@ -911,53 +912,30 @@ class BackgroundMesh:
 class GaussQuadrature:
     """Gauss quadrature for integration"""
     
-    def __init__(self, order=4):
+    def __init__(self, order=8):
         """
         Initialize Gauss quadrature
         
         Args:
             order: Quadrature order (number of points per dimension)
         """
-        self.order = order
+        self.order = int(order)
+        if self.order < 1:
+            raise ValueError(f"Order must be >= 1, got {self.order}")
         
-        # Gauss points and weights - matching Mathematica intpco and wlist
-        # These are taken from the Mathematica code's intpco[[order]] and wlist[[order]]
-        gauss_data = {
-            2: {
-                'points': [-0.5773502691896258, 0.5773502691896258],
-                'weights': [1.0, 1.0]
-            },
-            3: {
-                'points': [-0.7745966692414834, 0.0, 0.7745966692414834],
-                'weights': [0.5555555555555556, 0.8888888888888888, 0.5555555555555556]
-            },
-            4: {
-                'points': [-0.8302961484013275, -0.40957436820775056, 
-                          0.40957436820775056, 0.8302961484013275],
-                'weights': [0.3478548451374538, 0.6521451548625461,
-                           0.6521451548625461, 0.3478548451374538]
-            },
-            5: {
-                'points': [-0.9061798459386640, -0.5384693101056831, 0.0,
-                          0.5384693101056831, 0.9061798459386640],
-                'weights': [0.2369268850561891, 0.4786286704993665, 0.5688888888888889,
-                           0.4786286704993665, 0.2369268850561891]
-            }
-        }
-        
-        if order not in gauss_data:
-            raise ValueError(f"Order {order} not supported. Use 2, 3, 4, or 5.")
-        
-        self.points_1d = np.array(gauss_data[order]['points'])
-        self.weights_1d = np.array(gauss_data[order]['weights'])
+        # Use NumPy's built-in Gauss-Legendre generator (double precision).
+        # This replaces manually hardcoded tables and supports arbitrary order.
+        self.points_1d, self.weights_1d = leggauss(self.order)
+        self.points_1d = np.asarray(self.points_1d, dtype=np.float64)
+        self.weights_1d = np.asarray(self.weights_1d, dtype=np.float64)
         
         # Create 3D quadrature points and weights
         self.points_3d = []
         self.weights_3d = []
         
-        for i in range(order):
-            for j in range(order):
-                for k in range(order):
+        for i in range(self.order):
+            for j in range(self.order):
+                for k in range(self.order):
                     xi = self.points_1d[k]
                     eta = self.points_1d[j]
                     zeta = self.points_1d[i]
@@ -965,8 +943,8 @@ class GaussQuadrature:
                     self.points_3d.append([xi, eta, zeta])
                     self.weights_3d.append(w)
         
-        self.points_3d = np.array(self.points_3d)
-        self.weights_3d = np.array(self.weights_3d)
+        self.points_3d = np.array(self.points_3d, dtype=np.float64)
+        self.weights_3d = np.array(self.weights_3d, dtype=np.float64)
 
 
 class HexahedronElement:
@@ -1312,12 +1290,12 @@ class L2NormCalculator:
         
         return batch_error, batch_exact
     
-    def calculate(self, quadrature_order=4, n_processes=None):
+    def calculate(self, quadrature_order=8, n_processes=None):
         """
         Calculate L2 norm using Gauss quadrature with parallel processing.
         
         Args:
-            quadrature_order: Quadrature order (2 or 4)
+            quadrature_order: Number of Gauss points per axis
             n_processes: Number of parallel processes (default: CPU count)
             
         Returns:
@@ -1454,7 +1432,7 @@ class L2NormCalculator:
             'computation_time': elapsed_time
         }
     
-    def extract_plane_errors(self, plane='xz', plane_coord=None, quadrature_order=4, tolerance=None):
+    def extract_plane_errors(self, plane='xz', plane_coord=None, quadrature_order=8, tolerance=None):
         """
         提取指定平面上所有高斯点的误差数据，用于可视化
         
@@ -1696,7 +1674,7 @@ def process_all_results(base_dir='results/verification_5_2', rGL=2,
         
         try:
             calc = L2NormCalculator(folder, sneddon_file=sneddon_file)
-            result = calc.calculate(quadrature_order=4)
+            result = calc.calculate(quadrature_order=8)
             results.append(result)
             folder_time = time.time() - folder_start
             print(f"\n>>> Folder {folder.name} completed in {folder_time:.1f}s <<<")

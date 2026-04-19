@@ -6,6 +6,7 @@ Includes mesh generation and data extension from 0-90° to 0-180°
 import numpy as np
 import csv
 from pathlib import Path
+from numpy.polynomial.legendre import leggauss
 from const import material_property as mp
 from const import const_local_mesh as clm
 from const import simulation_params as sp
@@ -77,21 +78,19 @@ class JIntegralCalculator:
         
     def setup_gauss(self):
         """Setup Gauss integration points and weights"""
-        gp = [-0.5773502, 0.5773502]
-        gw = [1.0, 1.0]
+        gp, gw = leggauss(self.ngp)
+        gp = np.asarray(gp, dtype=np.float64)
+        gw = np.asarray(gw, dtype=np.float64)
         
         # 3D Gauss points: [psi, eta, zeta]
         # Match Mathematica order: eta, zeta, psi
         self.psi_eta_zeta = []
         self.weight = []
-        for eta in gp:
-            for zeta in gp:
-                for psi in gp:
+        for i_eta, eta in enumerate(gp):
+            for i_zeta, zeta in enumerate(gp):
+                for i_psi, psi in enumerate(gp):
                     self.psi_eta_zeta.append([psi, eta, zeta])
-                    idx_psi = gp.index(psi)
-                    idx_eta = gp.index(eta)
-                    idx_zeta = gp.index(zeta)
-                    self.weight.append(gw[idx_psi] * gw[idx_eta] * gw[idx_zeta])
+                    self.weight.append(gw[i_psi] * gw[i_eta] * gw[i_zeta])
         
         # Shape functions at Gauss points
         self.nn = [self.shp(p) for p in self.psi_eta_zeta]

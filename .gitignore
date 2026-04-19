@@ -274,3 +274,5 @@ circular_crack/crack_singularity_convergence.py
 # These scripts manage const file tracking but shouldn't be in repo
 # ignore_const_changes.sh
 # restore_const_tracking.sh
+
+.codex

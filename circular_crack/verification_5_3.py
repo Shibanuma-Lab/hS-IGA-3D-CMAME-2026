@@ -15,7 +15,7 @@ Paper parameters (Section 5.3):
 - Two mesh configurations:
   a) hL = 1/48  
   b) hL = 1/96
-- d_theta values to test: 1°, 3°, 6°, 10°, 15°
+- d_theta values to test: 9°, 6°, 3°, 2°, 1°
 
 Total: 5 d_theta values × 2 mesh configs = 10 cases
 """
@@ -57,6 +57,16 @@ class Verification53:
         # All values are divisors of 90° to ensure integer number of elements in quarter circle
         # 90°/9° = 10, 90°/6° = 15, 90°/3° = 30, 90°/2° = 45, 90°/1° = 90
         self.d_theta_values = [9.0, 6.0, 3.0, 2.0, 1.0]
+
+        # Section 5.3 special global mesh settings (control points).
+        # The user's requested pairs are interpreted as:
+        #   hL=1/48  -> (nPtsX, nPtsZ) = (25, 13)
+        #   hL=1/96  -> (nPtsX, nPtsZ) = (49, 25)
+        # and we keep XY symmetry by setting nPtsY = nPtsX.
+        self.global_npts_overrides = {
+            48: (25, 25, 13),  # (nPtsX, nPtsY, nPtsZ)
+            96: (49, 49, 25)
+        }
         
         # Skip existing results
         self.skip_existing = skip_existing
@@ -66,6 +76,26 @@ class Verification53:
         
         # Store all run configurations
         self.run_history = []
+
+    def get_global_npts(self, hL):
+        """
+        Get global control point counts (nPtsX, nPtsY, nPtsZ) for a given hL.
+        Uses section 5.3 special settings when available; otherwise falls back
+        to the original formula-based estimate.
+        """
+        step_count = int(round(1.0 / hL))
+        if step_count in self.global_npts_overrides:
+            return self.global_npts_overrides[step_count]
+
+        # Fallback to original rule for unexpected hL values
+        hG = hL * self.rGL
+        WidthG = 2.0
+        HeightG = 1.0
+        mu_G = 0.99 ** 0.5
+        nPtsX = int(np.ceil(WidthG * mu_G / hG)) + 2
+        nPtsY = nPtsX
+        nPtsZ = int(np.ceil(HeightG * mu_G / hG)) + 2
+        return (nPtsX, nPtsY, nPtsZ)
         
     def calculate_local_elements(self, hL):
         """
@@ -117,18 +147,8 @@ class Verification53:
         # Estimate local mesh DOF (approximate)
         local_DOF = aL_el * lL_el * HL_el * 8
         
-        # Global mesh size
-        hG = hL * self.rGL
-        
-        # Global domain (normalized): WidthG=2.0, HeightG=1.0
-        WidthG = 2.0
-        HeightG = 1.0
-        
-        # Global mesh control points (rough estimate)
-        mu_G = 0.99 ** 0.5
-        nPtsX = int(np.ceil(WidthG * mu_G / hG)) + 2
-        nPtsY = nPtsX
-        nPtsZ = int(np.ceil(HeightG * mu_G / hG)) + 2
+        # Global mesh control points
+        nPtsX, nPtsY, nPtsZ = self.get_global_npts(hL)
         
         global_DOF = nPtsX * nPtsY * nPtsZ * 3
         
@@ -256,7 +276,7 @@ class Verification53:
         
         return True
     
-    def save_run_config(self, run_folder, hL, hG, d_theta, local_elems, est_DOF):
+    def save_run_config(self, run_folder, hL, hG, d_theta, local_elems, est_DOF, global_npts):
         """
         Save run configuration to JSON file
         
@@ -279,6 +299,11 @@ class Verification53:
             'rBL': self.rBL,
             'd_theta': d_theta,
             'local_elements': local_elems,
+            'global_control_points': {
+                'nPtsX': global_npts[0],
+                'nPtsY': global_npts[1],
+                'nPtsZ': global_npts[2]
+            },
             'estimated_DOF': est_DOF,
             'local_dimensions': {
                 'WL': self.WL,
@@ -295,7 +320,7 @@ class Verification53:
         # Also add to history
         self.run_history.append(config)
     
-    def run_simulation(self, run_folder, hL):
+    def run_simulation(self, run_folder, hL, global_npts):
         """
         Run the simulation
         
@@ -312,8 +337,13 @@ class Verification53:
         c = 1.0
         step = int(round(c / hL))
         
-        # Run main.py with static_only mode
-        cmd = ['python3', 'main.py', '--static_only']
+        # Run main.py with static_only mode and section 5.3 nPts overrides
+        cmd = [
+            'python3', 'main.py', '--static_only',
+            '--static_nptsx', str(global_npts[0]),
+            '--static_nptsy', str(global_npts[1]),
+            '--static_nptsz', str(global_npts[2])
+        ]
         
         try:
             # Run simulation
@@ -382,6 +412,7 @@ class Verification53:
         # Calculate parameters
         hG = hL * self.rGL
         local_elems = self.calculate_local_elements(hL)
+        global_npts = self.get_global_npts(hL)
         est_DOF = self.estimate_DOF(hL)
         
         print(f"\n{'='*80}")
@@ -391,6 +422,7 @@ class Verification53:
         print(f"  hL = {hL:.8f}")
         print(f"  hG = {hG:.8f}")
         print(f"  d_theta = {d_theta}°")
+        print(f"  Global control points: nPtsX={global_npts[0]}, nPtsY={global_npts[1]}, nPtsZ={global_npts[2]}")
         print(f"  Local elements: aL={local_elems['aL']}, lL={local_elems['lL']}, HL={local_elems['HL']}")
         print(f"  Estimated DOF: {est_DOF:,}")
         
@@ -401,7 +433,7 @@ class Verification53:
         if already_exists and self.skip_existing:
             print(f"  SKIPPED: Results already exist")
             # Still save config for record keeping
-            self.save_run_config(run_folder, hL, hG, d_theta, local_elems, est_DOF)
+            self.save_run_config(run_folder, hL, hG, d_theta, local_elems, est_DOF, global_npts)
             return True
         
         # Update const files
@@ -409,10 +441,10 @@ class Verification53:
         self.update_const_files(hL, d_theta, local_elems)
         
         # Save configuration
-        self.save_run_config(run_folder, hL, hG, d_theta, local_elems, est_DOF)
+        self.save_run_config(run_folder, hL, hG, d_theta, local_elems, est_DOF, global_npts)
         
         # Run simulation
-        success = self.run_simulation(run_folder, hL)
+        success = self.run_simulation(run_folder, hL, global_npts)
         
         if success:
             print(f"\n  ✓ Case completed successfully")

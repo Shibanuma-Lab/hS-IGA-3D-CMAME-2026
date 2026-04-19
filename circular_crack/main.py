@@ -146,8 +146,28 @@ Examples:
     # Analysis mode
     argparser.add_argument("--static_only", action="store_true", default=False,
                           help="Static analysis mode with special mesh and boundary conditions")
+    argparser.add_argument("--static_nptsx", type=int, default=None,
+                          help="Override static global control points in X direction (requires --static_only)")
+    argparser.add_argument("--static_nptsy", type=int, default=None,
+                          help="Override static global control points in Y direction (requires --static_only)")
+    argparser.add_argument("--static_nptsz", type=int, default=None,
+                          help="Override static global control points in Z direction (requires --static_only)")
     
     args = argparser.parse_args()
+
+    # Validate static nPts override arguments
+    static_npts_args = (args.static_nptsx, args.static_nptsy, args.static_nptsz)
+    has_static_npts_override = any(v is not None for v in static_npts_args)
+    if has_static_npts_override:
+        if not args.static_only:
+            logger.error("--static_nptsx/--static_nptsy/--static_nptsz can only be used with --static_only")
+            return
+        if not all(v is not None for v in static_npts_args):
+            logger.error("Please provide all of --static_nptsx, --static_nptsy, and --static_nptsz together")
+            return
+        if min(static_npts_args) < 3:
+            logger.error("Static nPts overrides must be >= 3 in all directions")
+            return
     
     # Set static mode flag in simulation_params before any mesh generation
     sp.static_mode = args.static_only
@@ -159,6 +179,14 @@ Examples:
         clm.update_for_static_mode()  # Local mesh
         sp.update_for_static_mode()   # Simulation params
         mp.update_for_static_mode()   # Material properties
+
+        # Optional override: force specific global control point counts for static mode
+        if has_static_npts_override:
+            sp.nPtsX = args.static_nptsx
+            sp.nPtsY = args.static_nptsy
+            sp.nPtsZ = args.static_nptsz
+            logger.info(f"Static mode: overriding global control points to "
+                       f"nPtsX={sp.nPtsX}, nPtsY={sp.nPtsY}, nPtsZ={sp.nPtsZ}")
         
         # Calculate step automatically: step = c / hL (rounded to integer)
         auto_step = int(round(sp.c / clm.hL))
@@ -170,6 +198,7 @@ Examples:
         
         logger.info(f"Static parameters (dimensionless):")
         logger.info(f"  Geometry: c={sp.c}, hL={clm.hL} (hL=1/{1/clm.hL:.0f}), WidthG={sp.WidthG}, HeightG={sp.HeightG}")
+        logger.info(f"  Global control points: nPtsX={sp.nPtsX}, nPtsY={sp.nPtsY}, nPtsZ={sp.nPtsZ}")
         logger.info(f"  Material: E={mp.EE}, ν={mp.Nu}, σ={mp.SigmaInfinity}")
         logger.info(f"  Analysis: step={auto_step} → a = {auto_step}×{clm.hL} = {auto_step*clm.hL}")
     
