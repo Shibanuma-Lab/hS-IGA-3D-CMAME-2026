@@ -1615,7 +1615,8 @@ class L2NormCalculator:
 
 def process_all_results(base_dir='results/verification_5_2', rGL=2,
                        sneddon_file='sneddon_python.mat',
-                       output_file=None):
+                       output_file=None,
+                       n_processes=None):
     """
     Process all result folders for a given rGL value
     
@@ -1624,6 +1625,7 @@ def process_all_results(base_dir='results/verification_5_2', rGL=2,
         rGL: rGL value to process
         sneddon_file: Path to Sneddon data file
         output_file: Output CSV file (optional)
+        n_processes: Number of parallel worker processes (optional)
     """
     base_path = Path(base_dir)
     rGL_folder = base_path / f"rGL{rGL}_0.25"
@@ -1674,7 +1676,7 @@ def process_all_results(base_dir='results/verification_5_2', rGL=2,
         
         try:
             calc = L2NormCalculator(folder, sneddon_file=sneddon_file)
-            result = calc.calculate(quadrature_order=8)
+            result = calc.calculate(quadrature_order=8, n_processes=n_processes)
             results.append(result)
             folder_time = time.time() - folder_start
             print(f"\n>>> Folder {folder.name} completed in {folder_time:.1f}s <<<")
@@ -1751,14 +1753,24 @@ def main():
         type=str,
         help='Output CSV file (default: auto-generated)'
     )
+    parser.add_argument(
+        '--n-processes',
+        type=int,
+        default=None,
+        help='Number of parallel worker processes (default: CPU count - 1)'
+    )
     
     args = parser.parse_args()
+
+    if args.n_processes is not None and args.n_processes < 1:
+        parser.error('--n-processes must be >= 1')
     
     process_all_results(
         base_dir=args.base_dir,
         rGL=args.rGL,
         sneddon_file=args.sneddon_file,
-        output_file=args.output
+        output_file=args.output,
+        n_processes=args.n_processes
     )
 
 
