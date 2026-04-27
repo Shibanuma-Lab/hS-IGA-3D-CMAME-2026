@@ -13,10 +13,10 @@ d_theta = 1.000000  # Angular resolution [degrees]
 # Static mode values (will be set by update_for_static_mode)
 # Note: Static mode uses dimensionless (normalized) units
 #       All values are pure numbers without physical units
-hL_static = 0.010416666666666666  # Normalized element size (dimensionless)
-aL_static = 24
-lL_static = 24
-HL_static = 24
+hL_static = 0.015625  # Normalized element size (dimensionless)
+aL_static = 16
+lL_static = 16
+HL_static = 16
 
 def update_for_static_mode():
     """Update parameters for static mode"""

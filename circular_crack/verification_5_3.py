@@ -13,9 +13,9 @@ Paper parameters (Section 5.3):
 - Local mesh dimensions: WL=0.5, aL=0.25, lL=0.25, HL=0.25
 - Fixed rGL = 4
 - Two mesh configurations:
-  a) hL = 1/48  
-  b) hL = 1/96
-- d_theta values to test: 9°, 6°, 3°, 2°, 1°
+  a) hL = 1/48
+  b) hL = 1/64
+- d_theta values to test: 10°, 6°, 3°, 2°, 1°
 
 Total: 5 d_theta values × 2 mesh configs = 10 cases
 """
@@ -24,7 +24,6 @@ import os
 import sys
 import subprocess
 import shutil
-import numpy as np
 import json
 from datetime import datetime
 
@@ -47,25 +46,21 @@ class Verification53:
         self.rBL = 0.25
         
         # Two mesh configurations
-        self.hL_values = [1.0/48.0, 1.0/96.0]
+        self.hL_values = [1.0/48.0, 1.0/64.0]
         
         # d_theta values to test (degrees)
         # Order: from large to small (coarse to fine in crack front direction)
         # Larger d_theta = fewer elements in crack front = smaller DOF
-        # Note: Maximum d_theta limited to 9° due to IGA global mesh constraint
-        # (larger d_theta causes local mesh to span multiple IGA elements, reducing accuracy)
-        # All values are divisors of 90° to ensure integer number of elements in quarter circle
-        # 90°/9° = 10, 90°/6° = 15, 90°/3° = 30, 90°/2° = 45, 90°/1° = 90
-        self.d_theta_values = [9.0, 6.0, 3.0, 2.0, 1.0]
+        self.d_theta_values = [10.0, 6.0, 3.0, 2.0, 1.0]
 
         # Section 5.3 special global mesh settings (control points).
         # The user's requested pairs are interpreted as:
-        #   hL=1/48  -> (nPtsX, nPtsZ) = (25, 13)
-        #   hL=1/96  -> (nPtsX, nPtsZ) = (49, 25)
+        #   hL=1/48  -> (nPtsX, nPtsZ) = (27, 15)
+        #   hL=1/64  -> (nPtsX, nPtsZ) = (35, 19)
         # and we keep XY symmetry by setting nPtsY = nPtsX.
         self.global_npts_overrides = {
-            48: (25, 25, 13),  # (nPtsX, nPtsY, nPtsZ)
-            96: (49, 49, 25)
+            48: (27, 27, 15),  # (nPtsX, nPtsY, nPtsZ)
+            64: (35, 35, 19)
         }
         
         # Skip existing results
@@ -77,25 +72,18 @@ class Verification53:
         # Store all run configurations
         self.run_history = []
 
-    def get_global_npts(self, hL):
+    def get_global_npts_override(self, hL):
         """
         Get global control point counts (nPtsX, nPtsY, nPtsZ) for a given hL.
-        Uses section 5.3 special settings when available; otherwise falls back
-        to the original formula-based estimate.
+        Section 5.3 uses explicit overrides only.
         """
         step_count = int(round(1.0 / hL))
-        if step_count in self.global_npts_overrides:
-            return self.global_npts_overrides[step_count]
-
-        # Fallback to original rule for unexpected hL values
-        hG = hL * self.rGL
-        WidthG = 2.0
-        HeightG = 1.0
-        mu_G = 0.99 ** 0.5
-        nPtsX = int(np.ceil(WidthG * mu_G / hG)) + 2
-        nPtsY = nPtsX
-        nPtsZ = int(np.ceil(HeightG * mu_G / hG)) + 2
-        return (nPtsX, nPtsY, nPtsZ)
+        if step_count not in self.global_npts_overrides:
+            raise ValueError(
+                f"No global_npts_overrides entry for hL={hL} (1/{step_count}). "
+                f"Please add step_count={step_count} to self.global_npts_overrides."
+            )
+        return self.global_npts_overrides[step_count]
         
     def calculate_local_elements(self, hL):
         """
@@ -148,7 +136,7 @@ class Verification53:
         local_DOF = aL_el * lL_el * HL_el * 8
         
         # Global mesh control points
-        nPtsX, nPtsY, nPtsZ = self.get_global_npts(hL)
+        nPtsX, nPtsY, nPtsZ = self.get_global_npts_override(hL)
         
         global_DOF = nPtsX * nPtsY * nPtsZ * 3
         
@@ -412,7 +400,7 @@ class Verification53:
         # Calculate parameters
         hG = hL * self.rGL
         local_elems = self.calculate_local_elements(hL)
-        global_npts = self.get_global_npts(hL)
+        global_npts = self.get_global_npts_override(hL)
         est_DOF = self.estimate_DOF(hL)
         
         print(f"\n{'='*80}")
@@ -550,9 +538,9 @@ def main():
     parser.add_argument(
         '--hL',
         type=str,
-        choices=['48', '96', 'all'],
+        choices=['48', '64', 'all'],
         default='all',
-        help='Which hL config to run: 48 (1/48), 96 (1/96), or all (default: all)'
+        help='Which hL config to run: 48 (1/48), 64 (1/64), or all (default: all)'
     )
     parser.add_argument(
         '--dtheta',
@@ -572,8 +560,8 @@ def main():
     if args.hL != 'all':
         if args.hL == '48':
             verif.hL_values = [1.0/48.0]
-        elif args.hL == '96':
-            verif.hL_values = [1.0/96.0]
+        elif args.hL == '64':
+            verif.hL_values = [1.0/64.0]
     
     # Filter d_theta values if specified
     if args.dtheta is not None:
