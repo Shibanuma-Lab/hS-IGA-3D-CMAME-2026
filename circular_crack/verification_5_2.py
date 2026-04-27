@@ -10,6 +10,11 @@ Paper parameters (Section 5.2):
 - Local mesh dimensions: WL=0.5, aL=0.25, lL=0.25, HL=0.25
 - Isotropic condition: crack front direction element size = crack plane element size
   This means: 2*sin(d_theta/2) = hL
+
+Special cases:
+- hL = 1/48, static nPts = (27, 27, 15)
+- hL = 1/88, static nPts = (47, 47, 24)
+- Results are stored in results/verification_5_2/special_cases
 """
 
 import os
@@ -23,8 +28,13 @@ from datetime import datetime
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from const import const_global_mesh as cgm
+
+
 class Verification52:
     def __init__(self, domain_scale=0.25, skip_existing=True):
+        self.script_dir = os.path.dirname(os.path.abspath(__file__))
+
         # Paper parameters for local mesh (in normalized units)
         self.WL = domain_scale * 2
         # Scale factor for local domain size (0.25 in paper, 0.5 for larger domain)
@@ -35,6 +45,28 @@ class Verification52:
         
         # rGL values to test
         self.rGL_values = [2, 4, 8]
+
+        # Section 5.2 special branch. These cases use the same isotropic
+        # d_theta rule as the regular sweep, but force explicit global nPts.
+        self.special_cases = [
+            {
+                'name': 'hL_1_48_nPts_27_27_15',
+                'hL': 1.0 / 48.0,
+                'rGL': 4,
+                'global_npts': (27, 27, 15),
+            },
+            {
+                'name': 'hL_1_88_nPts_47_47_24',
+                'hL': 1.0 / 88.0,
+                'rGL': 4,
+                'global_npts': (47, 47, 24),
+            },
+        ]
+
+        # Static-mode domain constants used by simulation_params.update_for_static_mode().
+        self.static_c = 1.0
+        self.static_widthG = 2.0
+        self.static_heightG = 1.0
         
         # DOF limit
         self.max_DOF = 2e6
@@ -43,10 +75,41 @@ class Verification52:
         self.skip_existing = skip_existing
         
         # Base directory for results
-        self.base_results_dir = "results/verification_5_2"
+        self.base_results_dir = os.path.join(self.script_dir, "results/verification_5_2")
         
         # Store all run configurations
         self.run_history = []
+
+    def get_static_domain_lengths(self):
+        """
+        Return adjusted static global domain lengths used by main.py.
+        """
+        return (
+            self.static_widthG * cgm.mu_G,
+            self.static_widthG * cgm.mu_G,
+            self.static_heightG * cgm.mu_G,
+        )
+
+    def calculate_global_mesh_sizes(self, global_npts):
+        """
+        Calculate actual global element sizes from explicit static nPts.
+        """
+        nPtsX, nPtsY, nPtsZ = global_npts
+        Lx, Ly, Lz = self.get_static_domain_lengths()
+
+        if nPtsX <= cgm.p or nPtsY <= cgm.q or nPtsZ <= cgm.r:
+            raise ValueError(
+                "Global nPts must be larger than the spline degree in every direction."
+            )
+
+        return {
+            'hGx': Lx / (nPtsX - cgm.p),
+            'hGy': Ly / (nPtsY - cgm.q),
+            'hGz': Lz / (nPtsZ - cgm.r),
+            'Lx': Lx,
+            'Ly': Ly,
+            'Lz': Lz,
+        }
         
     def calculate_d_theta(self, hL):
         """
@@ -208,7 +271,7 @@ class Verification52:
         import re
         
         # Update const_local_mesh.py
-        const_local_mesh_path = "const/const_local_mesh.py"
+        const_local_mesh_path = os.path.join(self.script_dir, "const/const_local_mesh.py")
         
         with open(const_local_mesh_path, 'r') as f:
             lines = f.readlines()
@@ -233,7 +296,7 @@ class Verification52:
             f.writelines(new_lines)
         
         # Update const_global_mesh.py
-        const_global_mesh_path = "const/const_global_mesh.py"
+        const_global_mesh_path = os.path.join(self.script_dir, "const/const_global_mesh.py")
         
         with open(const_global_mesh_path, 'r') as f:
             lines = f.readlines()
@@ -290,8 +353,7 @@ class Verification52:
             return False
         
         # Calculate expected step number
-        c = 1.0
-        step = int(round(c / hL))
+        step = int(round(self.static_c / hL))
         step_str = f"{step:05d}"
         
         # Check if result directory exists
@@ -387,7 +449,12 @@ class Verification52:
         cmd = ["python3", "main.py", "--static_only"]
         
         print(f"\nExecuting: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=self.script_dir
+        )
         
         if result.returncode != 0:
             print(f"ERROR: Simulation failed!")
@@ -399,12 +466,11 @@ class Verification52:
         
         # Determine step number (should be auto-calculated by main.py)
         # step = round(c / hL) where c=1.0 in static mode
-        c = 1.0
-        step = int(round(c / hL))
+        step = int(round(self.static_c / hL))
         step_str = f"{step:05d}"
         
         # Copy result files
-        source_result_dir = f"results/step{step_str}"
+        source_result_dir = os.path.join(self.script_dir, f"results/step{step_str}")
         if os.path.exists(source_result_dir):
             # Copy entire result directory
             dest_result_dir = os.path.join(run_folder, f"step{step_str}")
@@ -416,7 +482,7 @@ class Verification52:
             print(f"WARNING: Result directory not found: {source_result_dir}")
         
         # Copy input files as well
-        source_input_dir = f"inputfiles/step{step_str}"
+        source_input_dir = os.path.join(self.script_dir, f"inputfiles/step{step_str}")
         if os.path.exists(source_input_dir):
             dest_input_dir = os.path.join(run_folder, f"inputfiles_step{step_str}")
             if os.path.exists(dest_input_dir):
@@ -445,6 +511,229 @@ class Verification52:
             json.dump(run_info, f, indent=2)
         
         return run_info
+
+    def estimate_DOF_with_global_npts(self, hL, global_npts, d_theta):
+        """
+        Estimate DOF for a special case with explicit global control points.
+        """
+        local_elems = self.calculate_local_elements(hL)
+        nLr = local_elems['aL'] + local_elems['lL']
+        nLtheta = int(round(90.0 / d_theta))
+        local_DOF = (nLr + 1) * (nLtheta + 1) * (local_elems['HL'] + 1) * 3
+
+        nPtsX, nPtsY, nPtsZ = global_npts
+        global_DOF = nPtsX * nPtsY * nPtsZ * 3
+
+        return local_DOF + global_DOF
+
+    @staticmethod
+    def format_float_for_path(value, decimals=6):
+        """
+        Format a float compactly for result folder names.
+        """
+        text = f"{value:.{decimals}f}".rstrip('0').rstrip('.')
+        return text if text else "0"
+
+    def create_special_result_folder(self, case, hG):
+        """
+        Create result folder under verification_5_2/special_cases.
+        """
+        special_base_dir = os.path.join(self.base_results_dir, "special_cases")
+        os.makedirs(special_base_dir, exist_ok=True)
+
+        nPtsX, nPtsY, nPtsZ = case['global_npts']
+        hL_text = self.format_float_for_path(case['hL'], decimals=8)
+        hG_text = self.format_float_for_path(hG, decimals=8)
+        run_folder_name = (
+            f"{case['name']}_hL_{hL_text}_hG_{hG_text}_"
+            f"nPts_{nPtsX}_{nPtsY}_{nPtsZ}"
+        )
+        run_folder = os.path.join(special_base_dir, run_folder_name)
+
+        already_exists = self._check_result_exists(run_folder, case['hL'])
+        os.makedirs(run_folder, exist_ok=True)
+
+        return run_folder, already_exists
+
+    def run_special_case(self, case, force_run=False):
+        """
+        Run one Section 5.2 special case with explicit static nPts.
+        """
+        hL = case['hL']
+        rGL = case.get('rGL', 4)
+        global_npts = case['global_npts']
+        d_theta = self.calculate_d_theta(hL)
+        nLtheta = int(round(90.0 / d_theta))
+        actual_d_theta = 90.0 / nLtheta
+        local_elems = self.calculate_local_elements(hL)
+        global_mesh_sizes = self.calculate_global_mesh_sizes(global_npts)
+        hG = global_mesh_sizes['hGx']
+        actual_rGL = hG / hL
+        estimated_DOF = self.estimate_DOF_with_global_npts(hL, global_npts, d_theta)
+
+        run_folder, already_exists = self.create_special_result_folder(case, hG)
+
+        if already_exists and self.skip_existing and not force_run:
+            print(f"\n{'='*70}")
+            print(f"SKIPPING special case (already exists): {case['name']}")
+            print(f"{'='*70}")
+            print(f"  Result folder: {run_folder}")
+
+            run_info = {
+                'special_case': True,
+                'case_name': case['name'],
+                'rGL': rGL,
+                'hL': hL,
+                'hG': hG,
+                'actual_rGL': actual_rGL,
+                'global_npts': {
+                    'nPtsX': global_npts[0],
+                    'nPtsY': global_npts[1],
+                    'nPtsZ': global_npts[2],
+                },
+                'global_mesh_sizes': global_mesh_sizes,
+                'd_theta': d_theta,
+                'nLtheta': nLtheta,
+                'actual_d_theta': actual_d_theta,
+                'aL': local_elems['aL'],
+                'lL': local_elems['lL'],
+                'HL': local_elems['HL'],
+                'step': int(round(self.static_c / hL)),
+                'estimated_DOF': estimated_DOF,
+                'result_folder': run_folder,
+                'skipped': True,
+            }
+            return run_info
+
+        print(f"\n{'='*70}")
+        print(f"Running special case: {case['name']}")
+        print(f"{'='*70}")
+        print(f"hL={hL:.8f} (1/{1/hL:.0f})")
+        print(f"nominal rGL={rGL}, actual hG/hL={actual_rGL:.6f}")
+        print(f"hG=Lx/(nPtsX-{cgm.p})={hG:.8f}")
+        print(f"Global control points: nPtsX={global_npts[0]}, nPtsY={global_npts[1]}, nPtsZ={global_npts[2]}")
+        print(f"Local elements: aL={local_elems['aL']}, lL={local_elems['lL']}, HL={local_elems['HL']}")
+        print(f"d_theta input={d_theta:.6f} degrees, nLtheta={nLtheta}, actual d_theta={actual_d_theta:.6f} degrees")
+        print(f"Estimated DOF: {estimated_DOF:.2e}")
+        print(f"Result folder: {run_folder}")
+
+        self.update_const_files(hL, rGL, d_theta, local_elems)
+
+        cmd = [
+            "python3", "main.py", "--static_only",
+            "--static_nptsx", str(global_npts[0]),
+            "--static_nptsy", str(global_npts[1]),
+            "--static_nptsz", str(global_npts[2]),
+        ]
+
+        print(f"\nExecuting: {' '.join(cmd)}")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=self.script_dir
+        )
+
+        if result.returncode != 0:
+            print(f"ERROR: Special case failed!")
+            print(f"STDOUT:\n{result.stdout}")
+            print(f"STDERR:\n{result.stderr}")
+            return None
+
+        print("Special case completed successfully")
+
+        step = int(round(self.static_c / hL))
+        step_str = f"{step:05d}"
+
+        source_result_dir = os.path.join(self.script_dir, f"results/step{step_str}")
+        if os.path.exists(source_result_dir):
+            dest_result_dir = os.path.join(run_folder, f"step{step_str}")
+            if os.path.exists(dest_result_dir):
+                shutil.rmtree(dest_result_dir)
+            shutil.copytree(source_result_dir, dest_result_dir)
+            print(f"Results copied to: {run_folder}")
+        else:
+            print(f"WARNING: Result directory not found: {source_result_dir}")
+
+        source_input_dir = os.path.join(self.script_dir, f"inputfiles/step{step_str}")
+        if os.path.exists(source_input_dir):
+            dest_input_dir = os.path.join(run_folder, f"inputfiles_step{step_str}")
+            if os.path.exists(dest_input_dir):
+                shutil.rmtree(dest_input_dir)
+            shutil.copytree(source_input_dir, dest_input_dir)
+
+        run_info = {
+            'special_case': True,
+            'case_name': case['name'],
+            'rGL': rGL,
+            'hL': hL,
+            'hG': hG,
+            'nominal_hG': hL * rGL,
+            'actual_rGL': actual_rGL,
+            'global_npts': {
+                'nPtsX': global_npts[0],
+                'nPtsY': global_npts[1],
+                'nPtsZ': global_npts[2],
+            },
+            'global_mesh_sizes': global_mesh_sizes,
+            'd_theta': d_theta,
+            'nLtheta': nLtheta,
+            'actual_d_theta': actual_d_theta,
+            'aL': local_elems['aL'],
+            'lL': local_elems['lL'],
+            'HL': local_elems['HL'],
+            'step': step,
+            'estimated_DOF': estimated_DOF,
+            'timestamp': datetime.now().isoformat(),
+            'result_folder': run_folder,
+            'skipped': False,
+        }
+
+        config_file = os.path.join(run_folder, "run_config.json")
+        with open(config_file, 'w') as f:
+            json.dump(run_info, f, indent=2)
+
+        return run_info
+
+    def run_special_cases(self):
+        """
+        Run the two explicit Section 5.2 special cases.
+        """
+        special_base_dir = os.path.join(self.base_results_dir, "special_cases")
+
+        print("="*70)
+        print("Verification 5.2: Special Cases")
+        print("="*70)
+        print(f"Base results directory: {special_base_dir}")
+        print("Isotropic condition: 2*sin(d_theta/2) = hL")
+        print(f"Skip existing: {self.skip_existing}")
+
+        os.makedirs(special_base_dir, exist_ok=True)
+
+        special_history = []
+        for i, case in enumerate(self.special_cases, start=1):
+            print(f"\n--- Special case {i}/{len(self.special_cases)} ---")
+            run_info = self.run_special_case(case)
+            if run_info:
+                special_history.append(run_info)
+                self.run_history.append(run_info)
+
+        history_file = os.path.join(special_base_dir, "run_history.json")
+        with open(history_file, 'w') as f:
+            json.dump(special_history, f, indent=2)
+
+        total_runs = len(special_history)
+        skipped_runs = sum(1 for r in special_history if r.get('skipped', False))
+        executed_runs = total_runs - skipped_runs
+
+        print(f"\n{'='*70}")
+        print("Special cases completed!")
+        print(f"{'='*70}")
+        print(f"Total configurations: {total_runs}")
+        print(f"  Executed: {executed_runs}")
+        print(f"  Skipped (already exist): {skipped_runs}")
+        print(f"Results saved in: {special_base_dir}")
+        print(f"Run history saved in: {history_file}")
     
     def run_all(self):
         """
@@ -552,6 +841,11 @@ def main():
         action="store_true",
         help="Do not skip existing results, rerun all simulations"
     )
+    parser.add_argument(
+        "--special-cases",
+        action="store_true",
+        help="Run only the two explicit hL/nPts special cases under verification_5_2/special_cases"
+    )
     
     args = parser.parse_args()
     
@@ -563,8 +857,11 @@ def main():
     verif.rGL_values = args.rGL
     verif.max_DOF = args.max_DOF
     
-    # Run all simulations
-    verif.run_all()
+    # Run selected workflow
+    if args.special_cases:
+        verif.run_special_cases()
+    else:
+        verif.run_all()
 
 
 if __name__ == "__main__":
