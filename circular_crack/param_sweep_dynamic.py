@@ -509,7 +509,7 @@ class DynamicParamSweep:
         if self.result_exists(folder):
             message = "Existing result folder contains the expected final-step outputs"
             print(f"[{case.idx:02d}] SKIP {case.group:>3} {case.label}: {folder}")
-            if self.postprocess:
+            if self.postprocess and not self.dry_run:
                 try:
                     from postprocess_dynamic import postprocess_case
 
@@ -523,6 +523,8 @@ class DynamicParamSweep:
                 except Exception as exc:
                     message = f"{message}; postprocess failed: {exc}"
                     return case.csv_row(folder, "skipped_postprocess_failed", 0.0, message)
+            if self.postprocess and self.dry_run:
+                message = f"{message}; dry-run does not execute postprocess"
             return case.csv_row(folder, "skipped", 0.0, message)
 
         if self.dry_run and planned_folders is not None and folder_key in planned_folders:
