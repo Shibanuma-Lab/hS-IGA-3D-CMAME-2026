@@ -342,8 +342,9 @@ class DynamicParamSweep:
         mesh_constants=None,
         dry_run=False,
         force=False,
-        postprocess=False,
+        postprocess=True,
         postprocess_skip_dsif=False,
+        only_baseline=False,
     ):
         self.velocities = [float(v) for v in velocities]
         self.output_dir = Path(output_dir).resolve()
@@ -358,57 +359,71 @@ class DynamicParamSweep:
         self.force = force
         self.postprocess = postprocess
         self.postprocess_skip_dsif = postprocess_skip_dsif
+        self.only_baseline = only_baseline
 
     def build_cases_for_velocity(self, velocity):
         cases = []
 
-        for rGL in RGL_VALUES:
+        if self.only_baseline:
             cases.append(
                 (
-                    "rGL",
-                    f"rGL={rGL}",
-                    rGL,
-                    baseline_aL(rGL),
-                    baseline_lL(rGL),
-                    baseline_HL(rGL),
-                )
-            )
-
-        for label, factor in A_FACTORS:
-            cases.append(
-                (
-                    "aL",
-                    f"aL=ceil({label}*rGL)",
+                    "baseline",
+                    "baseline",
                     BASE_RGL,
-                    ceil_scaled(factor, BASE_RGL),
+                    baseline_aL(),
                     baseline_lL(),
                     baseline_HL(),
                 )
             )
+        else:
 
-        for label, factor in LL_FACTORS:
-            cases.append(
-                (
-                    "lL",
-                    f"lL=ceil({label}*rGL)",
-                    BASE_RGL,
-                    baseline_aL(),
-                    sweep_lL(factor, BASE_RGL),
-                    baseline_HL(),
+            for rGL in RGL_VALUES:
+                cases.append(
+                    (
+                        "rGL",
+                        f"rGL={rGL}",
+                        rGL,
+                        baseline_aL(rGL),
+                        baseline_lL(rGL),
+                        baseline_HL(rGL),
+                    )
                 )
-            )
 
-        for label, factor in HL_FACTORS:
-            cases.append(
-                (
-                    "HL",
-                    f"HL=ceil({label}*rGL)",
-                    BASE_RGL,
-                    baseline_aL(),
-                    baseline_lL(),
-                    ceil_scaled(factor, BASE_RGL),
+            for label, factor in A_FACTORS:
+                cases.append(
+                    (
+                        "aL",
+                        f"aL=ceil({label}*rGL)",
+                        BASE_RGL,
+                        ceil_scaled(factor, BASE_RGL),
+                        baseline_lL(),
+                        baseline_HL(),
+                    )
                 )
-            )
+
+            for label, factor in LL_FACTORS:
+                cases.append(
+                    (
+                        "lL",
+                        f"lL=ceil({label}*rGL)",
+                        BASE_RGL,
+                        baseline_aL(),
+                        sweep_lL(factor, BASE_RGL),
+                        baseline_HL(),
+                    )
+                )
+
+            for label, factor in HL_FACTORS:
+                cases.append(
+                    (
+                        "HL",
+                        f"HL=ceil({label}*rGL)",
+                        BASE_RGL,
+                        baseline_aL(),
+                        baseline_lL(),
+                        ceil_scaled(factor, BASE_RGL),
+                    )
+                )
 
         sweep_cases = []
         for i, (group, label, rGL, aL, lL, HL) in enumerate(cases, start=1):
@@ -447,6 +462,7 @@ class DynamicParamSweep:
         const_editor = None
 
         if not self.dry_run:
+            self.cleanup_workdirs()
             const_editor = ConstFileEditor(SCRIPT_DIR)
 
         try:
@@ -475,6 +491,7 @@ class DynamicParamSweep:
             print(f"Output directory: {self.output_dir}")
             print(f"Summary CSV: {summary_path}")
             print(f"Dry run: {self.dry_run}")
+            print(f"Postprocess: {self.postprocess}")
 
             planned_folders = set()
             for case in cases:
@@ -581,6 +598,7 @@ class DynamicParamSweep:
                 return case.csv_row(folder, "failed", seconds, message)
 
             self.copy_outputs(folder)
+            self.cleanup_workdirs()
             config_path = folder / "run_config.json"
             config_path.write_text(
                 json.dumps(
@@ -626,6 +644,17 @@ class DynamicParamSweep:
             source = SCRIPT_DIR / "results" / f"step{step:05d}"
             if source.exists():
                 shutil.rmtree(source)
+
+    def cleanup_workdirs(self):
+        results_dir = SCRIPT_DIR / "results"
+        if results_dir.exists():
+            for step_dir in results_dir.glob("step*"):
+                if step_dir.is_dir():
+                    shutil.rmtree(step_dir)
+
+        inputfiles_dir = SCRIPT_DIR / "inputfiles"
+        if inputfiles_dir.exists():
+            shutil.rmtree(inputfiles_dir)
 
     def copy_outputs(self, folder):
         folder.mkdir(parents=True, exist_ok=True)
@@ -758,13 +787,26 @@ def parse_args():
     parser.add_argument(
         "--postprocess",
         action="store_true",
-        help="Run local-stress and DSIF post-processing after each completed case",
+        dest="postprocess",
+        help="Run local-stress and DSIF post-processing after each completed case (default)",
+    )
+    parser.add_argument(
+        "--no-postprocess",
+        action="store_false",
+        dest="postprocess",
+        help="Do not run post-processing after each completed case",
     )
     parser.add_argument(
         "--postprocess-skip-dsif",
         action="store_true",
         help="With --postprocess, only calculate local-stress outputs",
     )
+    parser.add_argument(
+        "--only-baseline",
+        action="store_true",
+        help="Run only the baseline case rGL=8, aL=20, lL=10, HL=15",
+    )
+    parser.set_defaults(postprocess=True)
     return parser.parse_args()
 
 
@@ -794,6 +836,7 @@ def main():
         force=args.force,
         postprocess=args.postprocess,
         postprocess_skip_dsif=args.postprocess_skip_dsif,
+        only_baseline=args.only_baseline,
     )
     sweep.run()
 
