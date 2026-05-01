@@ -11,11 +11,38 @@ from const import material_property as mp
 from const import const_local_mesh as clm
 from const import simulation_params as sp
 
+Path("logs").mkdir(exist_ok=True)
+
+try:
+    from fem_data_loader import FEMDataLoader
+except ImportError:  # pragma: no cover - package import fallback
+    from .fem_data_loader import FEMDataLoader
+
 
 class JIntegralCalculator:
     """Direct translation of Mathematica Jintegral[] function with mesh generation"""
     
-    def __init__(self, step_start=1, step_end=1, Rj0=1.5, Rj1=1.515, Wj0=1.0, Wj1=1.01, v=1000.0):
+    def __init__(
+        self,
+        step_start=1,
+        step_end=1,
+        Rj0=1.5,
+        Rj1=1.515,
+        Wj0=1.0,
+        Wj1=1.01,
+        v=1000.0,
+        result_root=None,
+        sigma_app=None,
+        c=None,
+        nu=None,
+        EE=None,
+        rho=None,
+        aL=None,
+        lL=None,
+        d_theta=None,
+        hL=None,
+        HL=None,
+    ):
         """
         Initialize J-integral calculator with configurable parameters.
         
@@ -29,17 +56,18 @@ class JIntegralCalculator:
             v: Crack velocity (m/s)
         """
         # Import parameters from const modules
-        self.sigma_app = mp.SigmaInfinity
-        self.c = sp.c
-        self.nu = mp.Nu
-        self.EE = mp.EE
-        self.rho = mp.Rho
-        
-        self.aL = clm.aL
-        self.lL = clm.lL
-        self.d_theta = clm.d_theta
-        self.hL = clm.hL
-        self.HL = clm.HL  # Height parameter (厚度方向单元数)
+        self.sigma_app = mp.SigmaInfinity if sigma_app is None else sigma_app
+        self.c = sp.c if c is None else c
+        self.nu = mp.Nu if nu is None else nu
+        self.EE = mp.EE if EE is None else EE
+        self.rho = mp.Rho if rho is None else rho
+
+        self.aL = clm.aL if aL is None else aL
+        self.lL = clm.lL if lL is None else lL
+        self.d_theta = clm.d_theta if d_theta is None else d_theta
+        self.hL = clm.hL if hL is None else hL
+        self.HL = clm.HL if HL is None else HL  # Height parameter (厚度方向单元数)
+        self.result_root = Path("results") if result_root is None else Path(result_root)
         
         # Configurable J-integral parameters
         self.Rj0 = Rj0
@@ -158,6 +186,34 @@ class JIntegralCalculator:
                     nodeLX.append([x, y, z])
         
         return np.array(nodeLX)
+
+    def generate_half_mesh(self, step):
+        """
+        Generate the original 0-90 degree local mesh nodes.
+        """
+        if step <= self.aL:
+            nodeLr = self.hL * np.arange(0, self.nLr + 1)
+        else:
+            nodeLr = self.hL * (step + np.arange(-self.aL, self.lL + 1))
+
+        nodeLz = self.hL * np.arange(0, self.HL + 1)
+        nodeLtheta = np.arange(0, 0.5 * np.pi + 1e-10, (0.5 * np.pi) / self.nL_theta)
+
+        nodeL = []
+        for z in nodeLz:
+            for theta in nodeLtheta:
+                for r in nodeLr:
+                    x = r * np.cos(theta)
+                    y = r * np.sin(theta)
+                    if abs(x) < 1e-9:
+                        x = 0.0
+                    if abs(y) < 1e-9:
+                        y = 0.0
+                    if abs(z) < 1e-9:
+                        z = 0.0
+                    nodeL.append([x, y, z])
+
+        return np.array(nodeL)
     
     def generate_elements(self, step):
         """
@@ -295,7 +351,7 @@ class JIntegralCalculator:
     
     def load_and_extend_data(self, step):
         """Load data from file and extend to full circle"""
-        log_dir = Path(f"results/step{step:05d}/log")
+        log_dir = self.result_root / f"step{step:05d}" / "log"
         
         # Load half-circle data (0-90°)
         disLG = np.loadtxt(log_dir / "u_gl.l.dat", skiprows=1)[:, 1:]
@@ -389,18 +445,17 @@ class JIntegralCalculator:
             result = self.getJ(nL, step, nodeLX, elemLX, disLGX, velLGX, acceLGX, r_theta_y, front0)
             Jintsd0.append(result)
         
-        # Mirror results
+        # Mirror results from the computed 45-90 half to 0-90.
         angles = [row[0] for row in Jintsd0]
         J_values = [row[1] for row in Jintsd0]
-        
-        # Mirror all angles to get 0°-45° from 45°-90°
-        # angles = [45, 48, ..., 87, 90]
-        # mirrored = [45, 42, ..., 3, 0] (reverse: [0, 3, ..., 42, 45])
-        # To avoid 45° duplication, exclude angles[0] when appending
-        # Result: [0, 3, ..., 42, 45] + [48, ..., 87, 90]
-        angles_mirrored = [90.0 - a for a in angles]
-        angles_full = list(reversed(angles_mirrored)) + angles[1:]
-        J_full = list(reversed(J_values)) + J_values[1:]
+        angles_mirrored = list(reversed([90.0 - a for a in angles]))
+        J_mirrored = list(reversed(J_values))
+        if self.nL_theta % 2 == 0:
+            angles_full = angles_mirrored[:-1] + angles
+            J_full = J_mirrored[:-1] + J_values
+        else:
+            angles_full = angles_mirrored + angles
+            J_full = J_mirrored + J_values
         
         # Store results
         if step == self.stepini:
@@ -537,8 +592,9 @@ class JIntegralCalculator:
             for ig in range(n_gauss):
                 bb[ie, ig] = np.linalg.inv(J_matrices[ie, ig]) @ self.Dnn[ig]
         
-        # Rotate displacements: uxyz
+        # Rotate displacements, velocities, and accelerations: uxyz
         dispR = np.zeros_like(disLGX)
+        velR = np.zeros_like(velLGX)
         acceR = np.zeros_like(acceLGX)
         for i in range(nnmLX):
             u, v, w = disLGX[i]
@@ -546,6 +602,12 @@ class JIntegralCalculator:
             uz = -u * np.sin(theta0) + v * np.cos(theta0)
             uy = w
             dispR[i] = [ux, uy, uz]
+
+            vu, vv, vw = velLGX[i]
+            vx = vu * np.cos(theta0) + vv * np.sin(theta0)
+            vz = -vu * np.sin(theta0) + vv * np.cos(theta0)
+            vy = vw
+            velR[i] = [vx, vy, vz]
             
             au, av, aw = acceLGX[i]
             ax = au * np.cos(theta0) + av * np.sin(theta0)
@@ -553,8 +615,9 @@ class JIntegralCalculator:
             ay = aw
             acceR[i] = [ax, ay, az]
         
-        # Element displacements and accelerations
+        # Element displacements, velocities, and accelerations
         dispqe = np.array([[dispR[node - 1] for node in elem] for elem in elemq])
+        velqe = np.array([[velR[node - 1] for node in elem] for elem in elemq])
         acceqe = np.array([[acceR[node - 1] for node in elem] for elem in elemq])
         
         # Calculate strain
@@ -581,6 +644,12 @@ class JIntegralCalculator:
         for ie in range(n_elem):
             for ig in range(n_gauss):
                 Du[ie, ig] = bb[ie, ig, 0] @ dispqe[ie]
+
+        # Calculate Dvel/dx
+        Dve = np.zeros((n_elem, n_gauss, 3))
+        for ie in range(n_elem):
+            for ig in range(n_gauss):
+                Dve[ie, ig] = bb[ie, ig, 0] @ velqe[ie]
         
         # Calculate Dq
         qie = np.array([qi[elem - 1] for elem in elemq])
@@ -593,9 +662,13 @@ class JIntegralCalculator:
         
         # Acceleration at Gauss points
         accee = np.zeros((n_elem, n_gauss, 3))
+        velee = np.zeros((n_elem, n_gauss, 3))
+        qgpe = np.zeros((n_elem, n_gauss))
         for ie in range(n_elem):
             for ig in range(n_gauss):
+                velee[ie, ig] = self.nn[ig] @ velqe[ie]
                 accee[ie, ig] = self.nn[ig] @ acceqe[ie]
+                qgpe[ie, ig] = self.nn[ig] @ qie[ie]
         
         # J-integral static part
         Jints = 0.0
@@ -619,8 +692,14 @@ class JIntegralCalculator:
         for ie in range(n_elem):
             for ig in range(n_gauss):
                 acce = accee[ie, ig]
+                vel = velee[ie, ig]
+                dve = Dve[ie, ig]
                 du = Du[ie, ig]
-                Jintd += np.dot(acce, du) * self.rho * detJ[ie, ig] * self.weight[ig]
+                dq = Dq[ie, ig]
+                qgp = qgpe[ie, ig]
+                kinetic_term = -0.5 * self.rho * np.dot(vel, vel) * dq[0]
+                inertial_term = self.rho * (np.dot(acce, du) - np.dot(vel, dve)) * qgp
+                Jintd += (kinetic_term + inertial_term) * detJ[ie, ig] * self.weight[ig]
         
         # Normalize
         Jints = (2.0 * Jints) / meas
@@ -674,6 +753,41 @@ class JIntegralCalculator:
         print(f"\nResults saved:")
         print(f"  - {output_path}")
         print(f"  - {kid_file}")
+
+
+class FEMReferenceJIntegralCalculator(JIntegralCalculator):
+    """
+    Calculate FEM reference DSIF on the same local mesh used by a sweep case.
+
+    The 2D axisymmetric FEM data are interpolated to the 0-90 degree local
+    mesh, transformed to Cartesian components, and then mirrored to 0-180
+    degrees using the same symmetry as the hS-IGA J-integral calculation.
+    """
+
+    def __init__(self, *args, fem_data_folder=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fem_loader = FEMDataLoader(fem_data_folder=fem_data_folder)
+        if not self.fem_loader.load_data(self.v):
+            raise FileNotFoundError(f"FEM data for velocity {self.v:g} was not found")
+
+    def load_and_extend_data(self, step):
+        nodeL = self.generate_half_mesh(step)
+
+        dis_2d = self.fem_loader.get_displacement_at_step(step)
+        vel_2d = self.fem_loader.get_velocity_at_step(step)
+        acce_2d = self.fem_loader.get_acceleration_at_step(step)
+        if dis_2d is None or vel_2d is None or acce_2d is None:
+            raise ValueError(f"FEM u/v/a data are incomplete for step {step}")
+
+        disFEM = self.fem_loader.interpolate_2d_to_3d(dis_2d, nodeL)
+        velFEM = self.fem_loader.interpolate_2d_to_3d(vel_2d, nodeL)
+        acceFEM = self.fem_loader.interpolate_2d_to_3d(acce_2d, nodeL)
+
+        return (
+            self.extend_data_to_full_circle(disFEM, step),
+            self.extend_data_to_full_circle(velFEM, step),
+            self.extend_data_to_full_circle(acceFEM, step),
+        )
 
 
 if __name__ == "__main__":
