@@ -43,9 +43,8 @@ def generate(step, REstart):
     poisson = mp.Nu
     density = mp.Rho
     
-    # Newmark-beta parameters
-    gamma = sp.Gamma
-    beta = sp.Beta
+    # HHT-alpha parameter. The solver computes beta and gamma from alpha.
+    alpha = sp.Alpha
     
     # Rayleigh damping
     Rm = sp.Alpha_l  # Mass damping coefficient (alpha)
@@ -112,46 +111,43 @@ def generate(step, REstart):
         # Line 9: density (with trailing dot like reference)
         f.write(f"{density:.0f}.\t  !> density\n")
         
-        # Line 10: gamma
-        f.write(f"{gamma}\t  !> gamma for newmark-beta\n")
+        # Line 10: HHT alpha
+        f.write(f"{alpha}\t  !> alpha for HHT-alpha\n")
         
-        # Line 11: beta
-        f.write(f"{beta}\t  !> beta for newmark-beta\n")
-        
-        # Line 12: Rm (with trailing dot like reference)
+        # Line 11: Rm (with trailing dot like reference)
         f.write(f"{Rm:.0f}.\t  !> Rm for Rayleigh damping for mass\n")
         
-        # Line 13: Rk (full precision scientific notation)
-        f.write(f"{Rk}\t  !> Rk for Rayleigh damping for mass\n")
+        # Line 12: Rk (full precision scientific notation)
+        f.write(f"{Rk}\t  !> Rk for Rayleigh damping for stiffness\n")
         
-        # Line 14: integration points
+        # Line 13: integration points
         f.write(f"{ngp}\t  !> local mesh integral point (not used)\n")
         
-        # Line 15: h-refine
+        # Line 14: h-refine
         f.write(f"{nrefine}\t  !> local mesh h-refine\n")
         
-        # Line 16: restart flag
+        # Line 15: restart flag
         f.write(f"{is_restart}\t  !> is_Restart (0:off, 1:on)\n")
         
-        # Line 17: number of threads
+        # Line 16: number of threads
         f.write(f"{num_threads}\t  !> number of thread\n")
         
-        # Line 18: IGA order
+        # Line 17: IGA order
         f.write(f"{order}\t  !> order for IGA\n")
         
-        # Line 19: control points U
+        # Line 18: control points U
         f.write(f"{nPtsU}\t  !> number of controlPts in U-direction\n")
         
-        # Line 20: control points V
+        # Line 19: control points V
         f.write(f"{nPtsV}\t  !> number of controlPts in V-direction\n")
         
-        # Line 21: control points W
+        # Line 20: control points W
         f.write(f"{nPtsW}\t  !> number of controlPts in W-direction\n")
         
-        # Line 22: penalty flag (always write, value=0)
+        # Line 21: penalty flag (always write, value=0)
         f.write(f"{penalty}\t  !> penalty or not\n")
 
-        # Line 23: is_sphere flag (always write, value=0)
+        # Line 22: is_sphere flag (always write, value=0)
         f.write(f"{is_sphere}\t  !> is_sphere or not\n")
     
     logger.info("input.dat generated successfully")

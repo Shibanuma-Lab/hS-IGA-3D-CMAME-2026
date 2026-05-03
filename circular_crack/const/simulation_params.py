@@ -62,10 +62,12 @@ nofix = 1  # Changing boundary conditions: 0=No, 1=Yes
 # Wj0 = 0.5
 # Wj1 = 0.51
 
-# HHT method
-Alpha = 0.
-Beta = 0.25
-Gamma = 0.5
+# HHT-alpha method
+# sfem_linear reads Alpha from input.dat and computes:
+#   Beta = (1 - Alpha)^2 / 4, Gamma = 0.5 - Alpha
+Alpha = -0.02
+Beta = (1.0 - Alpha) ** 2 / 4.0
+Gamma = 0.5 - Alpha
 
 # integral point
 ngp = 2
