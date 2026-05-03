@@ -36,6 +36,9 @@ FIELDNAMES = [
     "d_theta",
     "nLtheta",
     "hG",
+    "theta_reference_radius",
+    "hL_theta_ref",
+    "theta_hL_ratio",
     "hL_theta_max",
     "actual_ratio",
     "folder",
@@ -45,8 +48,8 @@ FIELDNAMES = [
 ]
 
 BASE_RGL = 8
-TARGET_THETA_RATIO = 1.2
 MIN_LL = 6
+SWEEP_GROUPS = ("rGL", "aL", "lL", "HL")
 RGL_VALUES = [3, 4, 6, 8, 10]
 A_FACTORS = [
     ("15/10", 15.0 / 10.0),
@@ -56,10 +59,10 @@ A_FACTORS = [
     ("40/10", 40.0 / 10.0),
 ]
 LL_FACTORS = [
-    ("8/10", 8.0 / 10.0),
     ("10/10", 10.0 / 10.0),
-    ("12/10", 12.0 / 10.0),
+    ("14/10", 14.0 / 10.0),
     ("16/10", 16.0 / 10.0),
+    ("18/10", 18.0 / 10.0),
     ("22/10", 22.0 / 10.0),
 ]
 HL_FACTORS = [
@@ -70,7 +73,6 @@ HL_FACTORS = [
     ("16/10", 16.0 / 10.0),
     ("18/10", 18.0 / 10.0),
     ("20/10", 20.0 / 10.0),
-    ("22/10", 22.0 / 10.0),
     ("24/10", 24.0 / 10.0),
 ]
 
@@ -120,6 +122,7 @@ def load_current_dynamic_constants():
 
     return {
         "hL": float(clm.hL),
+        "crack_radius": float(sp.c),
         "widthG": float(sp.WidthG),
         "mu_G": float(cgm.mu_G),
         "p": int(cgm.p),
@@ -136,64 +139,52 @@ def calculate_actual_hG(hL, rGL, mesh_constants):
     return Lx / n_elem_x
 
 
-def calculate_theta_from_ratio(target_ratio, hG, hL, lL, theta_max_step):
+def calculate_uniform_theta(hL, reference_radius):
     """
-    Use the Section 5.3 rule with the dynamic outer radius:
+    Use the Section 5.2-style isotropic angular spacing:
 
-        R = theta_max_step*hL + lL*hL
-        hL_theta_max = 2*R*sin(d_theta/2)
-        hL_theta_max / hG = target_ratio
+        2*R_ref*sin(d_theta/2) = hL
 
-    The local mesh generator expects d_theta to divide 90 degrees, so choose
-    the nearest admissible value d_theta = 90/nLtheta.
+    In dynamic runs hL is dimensional, while the Section 5.2 static script uses
+    a normalized crack radius of 1. Use the current crack radius as R_ref, then
+    choose nLtheta and d_theta so the final local mesh is a uniform division of
+    the 90-degree quadrant.
     """
-    if target_ratio <= 0:
-        raise ValueError(f"target_ratio must be positive, got {target_ratio}")
+    if hL <= 0:
+        raise ValueError(f"hL must be positive, got {hL}")
+    if reference_radius <= 0:
+        raise ValueError(f"reference_radius must be positive, got {reference_radius}")
 
-    outer_radius = (theta_max_step + lL) * hL
-    target_arg = target_ratio * hG / (2.0 * outer_radius)
+    target_arg = hL / (2.0 * reference_radius)
     if target_arg > 1.0:
         raise ValueError(
-            f"target_ratio={target_ratio} is too large: "
-            f"target_ratio*hG/(2R)={target_arg:.6f} > 1."
+            f"hL={hL} is too large for reference_radius={reference_radius}: "
+            f"hL/(2R_ref)={target_arg:.6f} > 1."
         )
 
     target_theta_rad = 2.0 * math.asin(target_arg)
     target_theta_deg = math.degrees(target_theta_rad)
     if target_theta_deg <= 0.0:
         raise ValueError(
-            f"target_ratio={target_ratio} produced non-positive target theta."
+            f"hL={hL} and reference_radius={reference_radius} produced "
+            "non-positive target theta."
         )
 
-    ideal_nLtheta = 90.0 / target_theta_deg
-    center = max(1, int(round(ideal_nLtheta)))
-    candidate_min = max(1, center - 4)
-    candidate_max = center + 4
+    nLtheta = max(1, int(round(90.0 / target_theta_deg)))
+    d_theta = 90.0 / nLtheta
+    hL_theta = 2.0 * reference_radius * math.sin(math.radians(d_theta) / 2.0)
+    actual_ratio = hL_theta / hL
 
-    best = None
-    for nLtheta in range(candidate_min, candidate_max + 1):
-        d_theta = 90.0 / nLtheta
-        hL_theta_max = 2.0 * outer_radius * math.sin(math.radians(d_theta) / 2.0)
-        actual_ratio = hL_theta_max / hG
-        ratio_error = actual_ratio - target_ratio
-        theta_error = d_theta - target_theta_deg
-        score = (abs(ratio_error), abs(theta_error), nLtheta)
-
-        if best is None or score < best["score"]:
-            best = {
-                "score": score,
-                "target_d_theta": target_theta_deg,
-                "d_theta": d_theta,
-                "nLtheta": nLtheta,
-                "outer_radius": outer_radius,
-                "hL_theta_max": hL_theta_max,
-                "actual_ratio": actual_ratio,
-                "ratio_error": ratio_error,
-                "relative_ratio_error": ratio_error / target_ratio,
-            }
-
-    best.pop("score")
-    return best
+    return {
+        "target_d_theta": target_theta_deg,
+        "d_theta": d_theta,
+        "nLtheta": nLtheta,
+        "reference_radius": reference_radius,
+        "hL_theta_max": hL_theta,
+        "actual_ratio": actual_ratio,
+        "ratio_error": actual_ratio - 1.0,
+        "relative_ratio_error": actual_ratio - 1.0,
+    }
 
 
 @dataclass(frozen=True)
@@ -211,8 +202,7 @@ class SweepCase:
     hG: float
     hL_theta_max: float
     actual_ratio: float
-    target_ratio: float
-    theta_max_step: int
+    theta_reference_radius: float
 
     @property
     def velocity_label(self):
@@ -239,6 +229,9 @@ class SweepCase:
             "d_theta": f"{self.d_theta:.12g}",
             "nLtheta": self.nLtheta,
             "hG": f"{self.hG:.12g}",
+            "theta_reference_radius": f"{self.theta_reference_radius:.12g}",
+            "hL_theta_ref": f"{self.hL_theta_max:.12g}",
+            "theta_hL_ratio": f"{self.actual_ratio:.12g}",
             "hL_theta_max": f"{self.hL_theta_max:.12g}",
             "actual_ratio": f"{self.actual_ratio:.12g}",
             "folder": str(folder),
@@ -258,11 +251,14 @@ class SweepCase:
             "lL": self.lL,
             "HL": self.HL,
             "hL": hL,
-            "target_ratio": self.target_ratio,
-            "theta_max_step": self.theta_max_step,
+            "theta_rule": "verification_5_2_uniform",
+            "theta_reference_radius": self.theta_reference_radius,
+            "target_theta_hL_ratio": 1.0,
             "d_theta": self.d_theta,
             "nLtheta": self.nLtheta,
             "hG": self.hG,
+            "hL_theta_ref": self.hL_theta_max,
+            "theta_hL_ratio": self.actual_ratio,
             "hL_theta_max": self.hL_theta_max,
             "actual_ratio": self.actual_ratio,
             "step_start": step_start,
@@ -337,29 +333,34 @@ class DynamicParamSweep:
         output_dir,
         step_start=0,
         max_step=100,
-        theta_max_step=None,
-        target_theta_ratio=TARGET_THETA_RATIO,
         mesh_constants=None,
         dry_run=False,
         force=False,
         postprocess=True,
         postprocess_skip_dsif=False,
         only_baseline=False,
+        selected_groups=None,
     ):
         self.velocities = [float(v) for v in velocities]
         self.output_dir = Path(output_dir).resolve()
         self.step_start = step_start
         self.max_step = max_step
         self.step_end = max_step + 1
-        self.theta_max_step = theta_max_step if theta_max_step is not None else max_step
-        self.target_theta_ratio = target_theta_ratio
         self.mesh_constants = mesh_constants or load_current_dynamic_constants()
         self.hL = self.mesh_constants["hL"]
+        self.theta_reference_radius = self.mesh_constants["crack_radius"]
         self.dry_run = dry_run
         self.force = force
         self.postprocess = postprocess
         self.postprocess_skip_dsif = postprocess_skip_dsif
         self.only_baseline = only_baseline
+        if selected_groups is None:
+            self.selected_groups = set(SWEEP_GROUPS)
+        else:
+            self.selected_groups = set(selected_groups)
+            invalid = self.selected_groups - set(SWEEP_GROUPS)
+            if invalid:
+                raise ValueError(f"Unknown sweep group(s): {', '.join(sorted(invalid))}")
 
     def build_cases_for_velocity(self, velocity):
         cases = []
@@ -377,63 +378,64 @@ class DynamicParamSweep:
             )
         else:
 
-            for rGL in RGL_VALUES:
-                cases.append(
-                    (
-                        "rGL",
-                        f"rGL={rGL}",
-                        rGL,
-                        baseline_aL(rGL),
-                        baseline_lL(rGL),
-                        baseline_HL(rGL),
+            if "rGL" in self.selected_groups:
+                for rGL in RGL_VALUES:
+                    cases.append(
+                        (
+                            "rGL",
+                            f"rGL={rGL}",
+                            rGL,
+                            baseline_aL(rGL),
+                            baseline_lL(rGL),
+                            baseline_HL(rGL),
+                        )
                     )
-                )
 
-            for label, factor in A_FACTORS:
-                cases.append(
-                    (
-                        "aL",
-                        f"aL=ceil({label}*rGL)",
-                        BASE_RGL,
-                        ceil_scaled(factor, BASE_RGL),
-                        baseline_lL(),
-                        baseline_HL(),
+            if "aL" in self.selected_groups:
+                for label, factor in A_FACTORS:
+                    cases.append(
+                        (
+                            "aL",
+                            f"aL=ceil({label}*rGL)",
+                            BASE_RGL,
+                            ceil_scaled(factor, BASE_RGL),
+                            baseline_lL(),
+                            baseline_HL(),
+                        )
                     )
-                )
 
-            for label, factor in LL_FACTORS:
-                cases.append(
-                    (
-                        "lL",
-                        f"lL=ceil({label}*rGL)",
-                        BASE_RGL,
-                        baseline_aL(),
-                        sweep_lL(factor, BASE_RGL),
-                        baseline_HL(),
+            if "lL" in self.selected_groups:
+                for label, factor in LL_FACTORS:
+                    cases.append(
+                        (
+                            "lL",
+                            f"lL=ceil({label}*rGL)",
+                            BASE_RGL,
+                            baseline_aL(),
+                            sweep_lL(factor, BASE_RGL),
+                            baseline_HL(),
+                        )
                     )
-                )
 
-            for label, factor in HL_FACTORS:
-                cases.append(
-                    (
-                        "HL",
-                        f"HL=ceil({label}*rGL)",
-                        BASE_RGL,
-                        baseline_aL(),
-                        baseline_lL(),
-                        ceil_scaled(factor, BASE_RGL),
+            if "HL" in self.selected_groups:
+                for label, factor in HL_FACTORS:
+                    cases.append(
+                        (
+                            "HL",
+                            f"HL=ceil({label}*rGL)",
+                            BASE_RGL,
+                            baseline_aL(),
+                            baseline_lL(),
+                            ceil_scaled(factor, BASE_RGL),
+                        )
                     )
-                )
 
         sweep_cases = []
         for i, (group, label, rGL, aL, lL, HL) in enumerate(cases, start=1):
             hG = calculate_actual_hG(self.hL, rGL, self.mesh_constants)
-            theta_info = calculate_theta_from_ratio(
-                self.target_theta_ratio,
-                hG,
+            theta_info = calculate_uniform_theta(
                 self.hL,
-                lL,
-                self.theta_max_step,
+                self.theta_reference_radius,
             )
             sweep_cases.append(
                 SweepCase(
@@ -450,8 +452,7 @@ class DynamicParamSweep:
                     hG=hG,
                     hL_theta_max=theta_info["hL_theta_max"],
                     actual_ratio=theta_info["actual_ratio"],
-                    target_ratio=self.target_theta_ratio,
-                    theta_max_step=self.theta_max_step,
+                    theta_reference_radius=theta_info["reference_radius"],
                 )
             )
 
@@ -486,8 +487,14 @@ class DynamicParamSweep:
             print("=" * 80)
             print(f"Steps: {self.step_start}..{self.max_step} ({self.step_end - self.step_start} solver calls)")
             print(f"hL: {self.hL:.12g}")
-            print(f"Target hL_theta_max/hG: {self.target_theta_ratio}")
-            print(f"Theta max step: {self.theta_max_step}")
+            print("Theta rule: Section 5.2-style uniform division")
+            print(f"Theta reference radius: {self.theta_reference_radius:.12g}")
+            print("Target theta-direction length / hL: 1.0")
+            if self.only_baseline:
+                print("Sweep groups: baseline only")
+            else:
+                selected = [group for group in SWEEP_GROUPS if group in self.selected_groups]
+                print(f"Sweep groups: {', '.join(selected)}")
             print(f"Output directory: {self.output_dir}")
             print(f"Summary CSV: {summary_path}")
             print(f"Dry run: {self.dry_run}")
@@ -540,7 +547,7 @@ class DynamicParamSweep:
             print(
                 f"[{case.idx:02d}] DRY  {case.group:>3} {case.label}: "
                 f"rGL={case.rGL}, aL={case.aL}, lL={case.lL}, HL={case.HL}, "
-                f"d_theta={case.d_theta:.6f}, ratio={case.actual_ratio:.6f}"
+                f"d_theta={case.d_theta:.6f}, theta/hL={case.actual_ratio:.6f}"
             )
             return case.csv_row(folder, "would_run", 0.0, message)
 
@@ -753,16 +760,28 @@ def parse_args():
         help="Last dynamic step to run/check; main.py receives step_end=max_step+1",
     )
     parser.add_argument(
-        "--theta-max-step",
-        type=int,
-        default=None,
-        help="Step used in R=(theta_max_step+lL)*hL for d_theta; defaults to max_step",
+        "--rGL",
+        action="store_true",
+        dest="run_rGL",
+        help="Run only rGL sweep cases; can be combined with other sweep-group switches",
     )
     parser.add_argument(
-        "--theta-ratio",
-        type=float,
-        default=TARGET_THETA_RATIO,
-        help="Target hL_theta_max/hG ratio used to calculate d_theta",
+        "--aL",
+        action="store_true",
+        dest="run_aL",
+        help="Run only aL sweep cases; can be combined with other sweep-group switches",
+    )
+    parser.add_argument(
+        "--lL",
+        action="store_true",
+        dest="run_lL",
+        help="Run only lL sweep cases; can be combined with other sweep-group switches",
+    )
+    parser.add_argument(
+        "--HL",
+        action="store_true",
+        dest="run_HL",
+        help="Run only HL sweep cases; can be combined with other sweep-group switches",
     )
     parser.add_argument(
         "--step-start",
@@ -816,29 +835,39 @@ def main():
     args = parse_args()
     if args.steps is not None and args.steps <= 0:
         raise ValueError("--steps must be positive")
-    if args.theta_ratio <= 0.0:
-        raise ValueError("--theta-ratio must be positive")
 
     max_step = args.max_step
     if args.steps is not None:
         max_step = args.step_start + args.steps - 1
     if max_step < args.step_start:
         raise ValueError("--max-step must be >= --step-start")
-    if args.theta_max_step is not None and args.theta_max_step < 0:
-        raise ValueError("--theta-max-step must be non-negative")
+
+    selected_groups = [
+        group
+        for group, selected in (
+            ("rGL", args.run_rGL),
+            ("aL", args.run_aL),
+            ("lL", args.run_lL),
+            ("HL", args.run_HL),
+        )
+        if selected
+    ]
+    if not selected_groups:
+        selected_groups = None
+    if args.only_baseline and selected_groups is not None:
+        raise ValueError("--only-baseline cannot be combined with --rGL/--aL/--lL/--HL")
 
     sweep = DynamicParamSweep(
         velocities=args.velocities,
         output_dir=args.output_dir,
         step_start=args.step_start,
         max_step=max_step,
-        theta_max_step=args.theta_max_step,
-        target_theta_ratio=args.theta_ratio,
         dry_run=args.dry_run,
         force=args.force,
         postprocess=args.postprocess,
         postprocess_skip_dsif=args.postprocess_skip_dsif,
         only_baseline=args.only_baseline,
+        selected_groups=selected_groups,
     )
     sweep.run()
 
