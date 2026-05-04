@@ -454,10 +454,10 @@ build_monolis() {
     make clean > /dev/null 2>&1 || true
     make FLAGS=MPI,METIS
 
-    if nm -g lib/libmonolis.a | grep -q "monolis_add_scalar_to_sparse_matrix_atomic_"; then
+    if monolis_library_has_atomic_symbol "lib/libmonolis.a"; then
         print_success "Verified monolis atomic sparse-matrix symbol"
     else
-        print_error "libmonolis.a does not export monolis_add_scalar_to_sparse_matrix_atomic_"
+        print_error "libmonolis.a does not contain the monolis atomic sparse-matrix module symbol"
         popd > /dev/null
         exit 1
     fi
@@ -479,9 +479,16 @@ build_solver() {
 }
 
 monolis_library_has_atomic_symbol() {
+    local monolis_lib="${1:-$SOLVER_DIR/submodule/monolis/lib/libmonolis.a}"
+
+    [ -f "$monolis_lib" ] && \
+        nm -g "$monolis_lib" | grep -Eq "(__mod_monolis_sparse_util_MOD_monolis_add_scalar_to_sparse_matrix_atomic|monolis_add_scalar_to_sparse_matrix_atomic_)"
+}
+
+existing_monolis_library_has_atomic_symbol() {
     local monolis_lib="$SOLVER_DIR/submodule/monolis/lib/libmonolis.a"
 
-    [ -f "$monolis_lib" ] && nm -g "$monolis_lib" | grep -q "monolis_add_scalar_to_sparse_matrix_atomic_"
+    monolis_library_has_atomic_symbol "$monolis_lib"
 }
 
 prepare_sfem_linear_repo
@@ -493,7 +500,7 @@ if [ ! -f "$SOLVER_BIN" ]; then
 elif [ "${FORCE_REBUILD_SOLVER:-0}" = "1" ]; then
     print_warning "FORCE_REBUILD_SOLVER=1; rebuilding solver and monolis"
     REBUILD_SOLVER=1
-elif [ -f "$SOLVER_DIR/submodule/monolis/lib/libmonolis.a" ] && ! monolis_library_has_atomic_symbol; then
+elif [ -f "$SOLVER_DIR/submodule/monolis/lib/libmonolis.a" ] && ! existing_monolis_library_has_atomic_symbol; then
     print_warning "Existing libmonolis.a lacks the atomic sparse-matrix symbol. Rebuilding solver and monolis..."
     REBUILD_SOLVER=1
 fi
