@@ -489,9 +489,14 @@ build_solver() {
 
 monolis_library_has_atomic_symbol() {
     local monolis_lib="${1:-$SOLVER_DIR/submodule/monolis/lib/libmonolis.a}"
+    local symbols
 
-    [ -f "$monolis_lib" ] && \
-        nm -a "$monolis_lib" 2>/dev/null | grep -Eiq "monolis_add_scalar_to_sparse_matrix_atomic"
+    if [ ! -f "$monolis_lib" ]; then
+        return 1
+    fi
+
+    symbols="$(nm -a "$monolis_lib" 2>/dev/null || true)"
+    [[ "$symbols" == *monolis_add_scalar_to_sparse_matrix_atomic* ]]
 }
 
 print_monolis_atomic_diagnostics() {
