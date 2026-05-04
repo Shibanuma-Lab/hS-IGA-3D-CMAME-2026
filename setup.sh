@@ -4,7 +4,7 @@
 # S-IGA Circular Crack 3D Solver - Installation Script
 # ============================================================================
 # This script automates the installation process for new computers
-# 
+#
 # Prerequisites:
 #   - Git repository already cloned
 #   - Run from project root directory
@@ -12,9 +12,18 @@
 # Usage:
 #   chmod +x setup.sh
 #   ./setup.sh
+#
+# Optional environment variables:
+#   SETUP_APT_UPGRADE=1       Run apt-get upgrade before installing packages
+#   FORCE_REBUILD_SOLVER=1    Rebuild monolis and sfem_linear even if binary exists
+#   SFEM_LINEAR_REPO=<url>    Override the sfem_linear clone URL
+#   SFEM_LINEAR_BRANCH=<name> Override the sfem_linear branch (default: tianyu_IGA)
 # ============================================================================
 
-set -e  # Exit on error
+set -euo pipefail  # Exit on error, unset variables, and failed pipelines
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_ROOT"
 
 # Colors for output
 RED='\033[0;31m'
@@ -45,6 +54,141 @@ print_error() {
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
 }
+
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO="sudo"
+fi
+
+APT_UPDATED=0
+
+apt_update_once() {
+    if [ "$APT_UPDATED" -eq 0 ]; then
+        print_info "Running apt update..."
+        $SUDO apt-get update
+        APT_UPDATED=1
+    fi
+}
+
+install_apt_packages() {
+    if ! command -v apt-get &> /dev/null; then
+        print_warning "apt-get not found. Skipping automatic system package installation."
+        print_info "Please install build tools, GCC/G++/GFortran 11, OpenMPI, CMake, Git, and Wget manually."
+        return
+    fi
+
+    if [ "${SETUP_APT_UPGRADE:-0}" = "1" ]; then
+        apt_update_once
+        print_info "Running apt upgrade because SETUP_APT_UPGRADE=1..."
+        $SUDO apt-get upgrade -y
+    fi
+
+    local packages=(
+        build-essential
+        cmake
+        make
+        git
+        wget
+        ca-certificates
+        tar
+        pkg-config
+        binutils
+        gcc-11
+        g++-11
+        gfortran-11
+        gfortran
+        openmpi-doc
+        openmpi-bin
+        libopenmpi-dev
+        zlib1g-dev
+        libncurses5-dev
+        libgdbm-dev
+        libnss3-dev
+        libssl-dev
+        libsqlite3-dev
+        libreadline-dev
+        libffi-dev
+        libbz2-dev
+        liblzma-dev
+        tk-dev
+    )
+
+    local missing=()
+    local pkg
+    for pkg in "${packages[@]}"; do
+        if ! dpkg -s "$pkg" &> /dev/null; then
+            missing+=("$pkg")
+        fi
+    done
+
+    if [ "${#missing[@]}" -eq 0 ]; then
+        print_success "System build dependencies are already installed"
+        return
+    fi
+
+    apt_update_once
+    print_info "Installing missing system packages: ${missing[*]}"
+    $SUDO apt-get install -y "${missing[@]}"
+}
+
+register_compiler_alternatives() {
+    local name="$1"
+    local path
+    local version
+    local priority
+
+    shopt -s nullglob
+    for path in /usr/bin/"$name"-[0-9]*; do
+        version="${path##*-}"
+        if [[ "$version" =~ ^[0-9]+$ ]]; then
+            priority=$((version * 10))
+            $SUDO update-alternatives --install "/usr/bin/$name" "$name" "$path" "$priority"
+        fi
+    done
+    shopt -u nullglob
+}
+
+configure_gcc_11() {
+    local required=("/usr/bin/gcc-11" "/usr/bin/g++-11" "/usr/bin/gfortran-11")
+    local exe
+
+    for exe in "${required[@]}"; do
+        if [ ! -x "$exe" ]; then
+            print_error "$exe not found after package installation"
+            exit 1
+        fi
+    done
+
+    print_info "Registering compiler alternatives and selecting GCC/G++/GFortran 11..."
+    register_compiler_alternatives "gcc"
+    register_compiler_alternatives "g++"
+    register_compiler_alternatives "gfortran"
+
+    $SUDO update-alternatives --set gcc /usr/bin/gcc-11
+    $SUDO update-alternatives --set g++ /usr/bin/g++-11
+    $SUDO update-alternatives --set gfortran /usr/bin/gfortran-11
+
+    export CC=/usr/bin/gcc-11
+    export CXX=/usr/bin/g++-11
+    export FC=/usr/bin/gfortran-11
+    export OMPI_CC=/usr/bin/gcc-11
+    export OMPI_CXX=/usr/bin/g++-11
+    export OMPI_FC=/usr/bin/gfortran-11
+
+    print_success "Compiler alternatives selected:"
+    print_info "gcc: $(gcc -dumpfullversion -dumpversion)"
+    print_info "g++: $(g++ -dumpfullversion -dumpversion)"
+    print_info "gfortran: $(gfortran -dumpfullversion -dumpversion)"
+}
+
+ensure_system_dependencies() {
+    print_header "Step 0: Installing System Dependencies"
+    install_apt_packages
+    configure_gcc_11
+    echo ""
+}
+
+ensure_system_dependencies
 
 # ============================================================================
 # Step 1: Check directory structure
@@ -86,31 +230,24 @@ if command -v python3.10 &> /dev/null; then
     PYTHON_EXEC=$(command -v python3.10)
 else
     print_warning "Python 3.10 not found. Installing..."
-    
-    print_info "Installing build dependencies..."
-    sudo apt update
-    sudo apt upgrade -y
-    sudo apt install -y build-essential zlib1g-dev libncurses5-dev libgdbm-dev \
-                        libnss3-dev libssl-dev libsqlite3-dev libreadline-dev \
-                        libffi-dev libbz2-dev wget
-    
+
+    TMP_BUILD_DIR=$(mktemp -d /tmp/siga-python-build.XXXXXX)
     print_info "Downloading Python $PYTHON_VERSION..."
-    cd /tmp
-    wget https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz
-    
+    pushd "$TMP_BUILD_DIR" > /dev/null
+    wget "https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz"
+
     print_info "Extracting and building Python..."
-    tar -xf Python-$PYTHON_VERSION.tgz
-    cd Python-$PYTHON_VERSION
-    ./configure --enable-optimizations
-    make -j$(nproc)
-    
+    tar -xf "Python-$PYTHON_VERSION.tgz"
+    pushd "Python-$PYTHON_VERSION" > /dev/null
+    ./configure --enable-optimizations --with-ensurepip=install
+    make -j"$(nproc)"
+
     print_info "Installing Python 3.10..."
-    sudo make altinstall
-    
-    # Clean up
-    cd /tmp
-    rm -rf Python-$PYTHON_VERSION Python-$PYTHON_VERSION.tgz
-    
+    $SUDO make altinstall
+    popd > /dev/null
+    popd > /dev/null
+    rm -rf "$TMP_BUILD_DIR"
+
     # Verify installation
     if python3.10 --version &> /dev/null; then
         print_success "Python 3.10 installed successfully!"
@@ -119,9 +256,6 @@ else
         print_error "Python 3.10 installation failed!"
         exit 1
     fi
-    
-    # Return to project directory
-    cd "$OLDPWD"
 fi
 
 echo ""
@@ -136,58 +270,52 @@ if command -v pipenv &> /dev/null; then
     print_success "Pipenv is already installed (version: $PIPENV_VERSION)"
 else
     print_warning "Pipenv not found. Installing..."
-    
+
     # Check if pip is available for Python 3.10
-    if ! python3.10 -m pip --version &> /dev/null; then
+    if ! "$PYTHON_EXEC" -m pip --version &> /dev/null; then
         print_warning "pip not found for Python 3.10. Installing..."
-        
-        # Try to install pip via apt first (works for system Python)
-        if python3.10 --version | grep -q "3.10"; then
-            print_info "Installing python3.10-pip via apt..."
-            sudo apt update
-            sudo apt install -y python3.10-venv python3.10-distutils
-            
-            # Download and install pip using get-pip.py
+
+        if "$PYTHON_EXEC" -m ensurepip --upgrade &> /dev/null; then
+            print_success "pip installed via ensurepip"
+        else
             print_info "Installing pip using get-pip.py..."
-            cd /tmp
+            TMP_PIP_DIR=$(mktemp -d /tmp/siga-pip-build.XXXXXX)
+            pushd "$TMP_PIP_DIR" > /dev/null
             wget -q https://bootstrap.pypa.io/get-pip.py
-            python3.10 get-pip.py --user
-            rm get-pip.py
-            cd "$OLDPWD"
-            
-            # Update PATH for current session
-            export PATH="$HOME/.local/bin:$PATH"
-            
-            if python3.10 -m pip --version &> /dev/null; then
-                print_success "pip installed successfully!"
-            else
-                print_error "Failed to install pip for Python 3.10!"
-                print_info "Please install pip manually:"
-                print_info "  sudo apt install python3-pip"
-                print_info "  or download: wget https://bootstrap.pypa.io/get-pip.py && python3.10 get-pip.py"
-                exit 1
-            fi
+            "$PYTHON_EXEC" get-pip.py --user
+            popd > /dev/null
+            rm -rf "$TMP_PIP_DIR"
+        fi
+
+        export PATH="$HOME/.local/bin:$PATH"
+
+        if "$PYTHON_EXEC" -m pip --version &> /dev/null; then
+            print_success "pip installed successfully!"
+        else
+            print_error "Failed to install pip for Python 3.10!"
+            print_info "Please install pip manually, then re-run this script."
+            exit 1
         fi
     fi
-    
+
     print_info "Installing Pipenv..."
-    python3.10 -m pip install --user pipenv
-    
+    "$PYTHON_EXEC" -m pip install --user pipenv
+
     # Add to PATH in .bashrc if not already present
     BASHRC="$HOME/.bashrc"
     PATH_EXPORT='export PATH="$HOME/.local/bin:$PATH"'
-    
-    if ! grep -q "$PATH_EXPORT" "$BASHRC"; then
+
+    if ! grep -q "$PATH_EXPORT" "$BASHRC" 2>/dev/null; then
         print_info "Adding Pipenv to PATH in .bashrc..."
         echo "" >> "$BASHRC"
         echo "# Added by S-IGA setup script" >> "$BASHRC"
         echo "$PATH_EXPORT" >> "$BASHRC"
         print_success "PATH updated in .bashrc"
     fi
-    
+
     # Update current session
     export PATH="$HOME/.local/bin:$PATH"
-    
+
     # Verify installation
     if command -v pipenv &> /dev/null; then
         print_success "Pipenv installed successfully!"
@@ -212,9 +340,7 @@ export PIPENV_VENV_IN_PROJECT=1  # Create .venv in project directory
 pipenv --python "$PYTHON_EXEC"
 
 print_info "Installing Python dependencies from Pipfile..."
-pipenv install
-
-if [ $? -eq 0 ]; then
+if pipenv install; then
     print_success "Virtual environment created and dependencies installed!"
 else
     print_error "Failed to install dependencies!"
@@ -244,94 +370,141 @@ echo ""
 # ============================================================================
 print_header "Step 6: Installing Fortran Solver"
 
-SOLVER_BIN="sfem_linear/bin/sfem_linear"
+SOLVER_DIR="sfem_linear"
+SOLVER_BIN="$SOLVER_DIR/bin/sfem_linear"
+SFEM_LINEAR_REPO="${SFEM_LINEAR_REPO:-git@gitlab.com:morita/sfem_linear.git}"
+SFEM_LINEAR_BRANCH="${SFEM_LINEAR_BRANCH:-tianyu_IGA}"
+MONOLIS_PATCH="$PROJECT_ROOT/patches/monolis-siga-atomic-openmp.patch"
 
-# Check if sfem_linear directory exists
-if [ ! -d "sfem_linear" ]; then
-    print_warning "sfem_linear directory not found. Cloning from GitLab..."
-    
-    # Check if git is available
-    if ! command -v git &> /dev/null; then
-        print_error "git is not installed!"
-        print_info "Please install git: sudo apt install git"
-        exit 1
-    fi
-    
-    print_info "Cloning sfem_linear repository..."
-    if git clone git@gitlab.com:morita/sfem_linear.git; then
-        print_success "sfem_linear repository cloned successfully"
-    else
-        print_error "Failed to clone sfem_linear repository!"
-        print_info "Please ensure you have SSH access to gitlab.com:morita/sfem_linear.git"
-        print_info "Or manually clone the repository and re-run this script"
-        exit 1
-    fi
-    
-    # Enter the directory and checkout the correct branch
-    cd sfem_linear
-    print_info "Switching to branch: tianyu_IGA"
-    if git checkout tianyu_IGA; then
-        print_success "Switched to branch tianyu_IGA"
-    else
-        print_error "Failed to checkout branch tianyu_IGA!"
-        cd ..
-        exit 1
-    fi
-    
-    # Run install script if it exists
-    if [ -f "install_lib.sh" ]; then
-        print_info "Running install_lib.sh..."
-        if bash install_lib.sh; then
-            print_success "install_lib.sh completed"
+prepare_sfem_linear_repo() {
+    if [ ! -d "$SOLVER_DIR" ]; then
+        print_warning "sfem_linear directory not found. Cloning from GitLab..."
+        print_info "Cloning $SFEM_LINEAR_REPO..."
+        if git clone "$SFEM_LINEAR_REPO" "$SOLVER_DIR"; then
+            print_success "sfem_linear repository cloned successfully"
         else
-            print_warning "install_lib.sh encountered issues (this may be normal)"
+            print_error "Failed to clone sfem_linear repository!"
+            print_info "Set SFEM_LINEAR_REPO to another clone URL if this machine does not have GitLab SSH access."
+            exit 1
+        fi
+    fi
+
+    if git -C "$SOLVER_DIR" rev-parse --is-inside-work-tree &> /dev/null; then
+        CURRENT_BRANCH=$(git -C "$SOLVER_DIR" branch --show-current 2>/dev/null || true)
+        if [ "$CURRENT_BRANCH" != "$SFEM_LINEAR_BRANCH" ]; then
+            print_info "Switching sfem_linear to branch: $SFEM_LINEAR_BRANCH"
+            if git -C "$SOLVER_DIR" checkout "$SFEM_LINEAR_BRANCH"; then
+                print_success "Switched to branch $SFEM_LINEAR_BRANCH"
+            else
+                print_error "Failed to checkout branch $SFEM_LINEAR_BRANCH"
+                exit 1
+            fi
         fi
     else
-        print_warning "install_lib.sh not found, skipping..."
+        print_error "$SOLVER_DIR exists but is not a git repository"
+        exit 1
     fi
-    
-    # Build the solver (sequential build to avoid Fortran module dependency issues)
-    print_info "Building solver with make..."
-    if make; then
-      print_success "Solver built successfully!"
+}
+
+ensure_monolis_source() {
+    local monolis_dir="$SOLVER_DIR/submodule/monolis"
+
+    if [ ! -d "$monolis_dir" ] || [ -z "$(ls -A "$monolis_dir" 2>/dev/null)" ]; then
+        print_info "Initializing sfem_linear submodules..."
+        git -C "$SOLVER_DIR" submodule update --init --recursive
+    fi
+
+    if [ ! -f "$monolis_dir/src/matrix/sparse_util.f90" ]; then
+        print_error "monolis source was not initialized correctly"
+        exit 1
+    fi
+
+    if grep -q "subroutine monolis_add_scalar_to_sparse_matrix_atomic" "$monolis_dir/src/matrix/sparse_util.f90" \
+        && grep -q -- "-fopenmp" "$monolis_dir/Makefile"; then
+        print_success "monolis already contains the S-IGA atomic sparse-matrix addition and OpenMP flags"
+        return
+    fi
+
+    if [ ! -f "$MONOLIS_PATCH" ]; then
+        print_error "Missing monolis compatibility patch: $MONOLIS_PATCH"
+        exit 1
+    fi
+
+    print_warning "monolis submodule lacks the required S-IGA compatibility changes. Applying project patch..."
+    if git -C "$monolis_dir" apply --check "$MONOLIS_PATCH"; then
+        git -C "$monolis_dir" apply "$MONOLIS_PATCH"
+        print_success "Applied monolis S-IGA compatibility patch"
+    elif git -C "$monolis_dir" apply --reverse --check "$MONOLIS_PATCH"; then
+        print_success "monolis compatibility patch is already applied"
     else
-      print_error "Failed to build solver!"
-      print_info "Please check the build errors above"
-      cd ..
-      exit 1
-    fi    # Return to project root
-    cd ..
-    
-elif [ ! -f "$SOLVER_BIN" ]; then
-    # Directory exists but binary doesn't - try to build
-    print_warning "Solver binary not found. Attempting to build..."
-    
-    cd sfem_linear
-    
-    # Check if we're on the correct branch
-    CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
-    if [ "$CURRENT_BRANCH" != "tianyu_IGA" ]; then
-        print_info "Switching to branch: tianyu_IGA"
-        git checkout tianyu_IGA || print_warning "Could not switch branch"
+        print_error "Failed to apply monolis compatibility patch"
+        print_info "Long-term fix: push the monolis changes and update sfem_linear's submodule pointer."
+        exit 1
     fi
-    
-    # Run install script if it exists
-    if [ -f "install_lib.sh" ]; then
-        print_info "Running install_lib.sh..."
-        bash install_lib.sh || print_warning "install_lib.sh encountered issues"
-    fi
-    
-    # Build the solver (sequential build to avoid Fortran module dependency issues)
-    print_info "Building solver with make..."
-    if make; then
-      print_success "Solver built successfully!"
+}
+
+build_monolis() {
+    local monolis_dir="$SOLVER_DIR/submodule/monolis"
+
+    print_info "Building monolis dependencies..."
+    pushd "$monolis_dir" > /dev/null
+    ./install_lib.sh METIS
+
+    print_info "Building monolis with MPI, METIS, and OpenMP support..."
+    make clean > /dev/null 2>&1 || true
+    make FLAGS=MPI,METIS
+
+    if nm -g lib/libmonolis.a | grep -q "monolis_add_scalar_to_sparse_matrix_atomic_"; then
+        print_success "Verified monolis atomic sparse-matrix symbol"
     else
-      print_error "Failed to build solver!"
-      cd ..
-      exit 1
+        print_error "libmonolis.a does not export monolis_add_scalar_to_sparse_matrix_atomic_"
+        popd > /dev/null
+        exit 1
     fi
-    
-    cd ..
+    popd > /dev/null
+}
+
+build_solver() {
+    print_info "Building sfem_linear solver..."
+    pushd "$SOLVER_DIR" > /dev/null
+    make clean > /dev/null 2>&1 || true
+    if make; then
+        print_success "Solver built successfully!"
+    else
+        print_error "Failed to build solver!"
+        popd > /dev/null
+        exit 1
+    fi
+    popd > /dev/null
+}
+
+monolis_library_has_atomic_symbol() {
+    local monolis_lib="$SOLVER_DIR/submodule/monolis/lib/libmonolis.a"
+
+    [ -f "$monolis_lib" ] && nm -g "$monolis_lib" | grep -q "monolis_add_scalar_to_sparse_matrix_atomic_"
+}
+
+prepare_sfem_linear_repo
+
+REBUILD_SOLVER=0
+if [ ! -f "$SOLVER_BIN" ]; then
+    print_warning "Solver binary not found. Building solver and monolis..."
+    REBUILD_SOLVER=1
+elif [ "${FORCE_REBUILD_SOLVER:-0}" = "1" ]; then
+    print_warning "FORCE_REBUILD_SOLVER=1; rebuilding solver and monolis"
+    REBUILD_SOLVER=1
+elif [ -f "$SOLVER_DIR/submodule/monolis/lib/libmonolis.a" ] && ! monolis_library_has_atomic_symbol; then
+    print_warning "Existing libmonolis.a lacks the atomic sparse-matrix symbol. Rebuilding solver and monolis..."
+    REBUILD_SOLVER=1
+fi
+
+if [ "$REBUILD_SOLVER" -eq 1 ]; then
+    if [ -f "$SOLVER_BIN" ] && [ "${FORCE_REBUILD_SOLVER:-0}" != "1" ]; then
+        print_info "Rebuild is needed to keep future sfem_linear builds linkable"
+    fi
+    ensure_monolis_source
+    build_monolis
+    build_solver
 else
     print_success "Fortran solver binary exists: $SOLVER_BIN"
 fi
@@ -348,10 +521,7 @@ if [ -f "$SOLVER_BIN" ]; then
 else
     print_error "Solver binary still not found after build attempt!"
     print_info "You may need to manually build sfem_linear:"
-    print_info "  cd sfem_linear"
-    print_info "  git checkout tianyu_IGA"
-    print_info "  bash install_lib.sh"
-    print_info "  make"
+    print_info "  FORCE_REBUILD_SOLVER=1 ./setup.sh"
 fi
 
 echo ""

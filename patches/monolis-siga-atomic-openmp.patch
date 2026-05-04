@@ -1,0 +1,76 @@
+diff --git a/Makefile b/Makefile
+index 539a04d..a823756 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ #> monolis Makefile
+ 
+ FC     = mpif90
+-FFLAGS = -O2 -mtune=native -march=native -std=legacy
++FFLAGS = -O2 -mtune=native -march=native -std=legacy -fopenmp
+ 
+ CC     = mpic++
+ CFLAGS = -O2
+diff --git a/src/matrix/sparse_util.f90 b/src/matrix/sparse_util.f90
+index ad8e127..5a9d5b2 100644
+--- a/src/matrix/sparse_util.f90
++++ b/src/matrix/sparse_util.f90
+@@ -477,5 +477,58 @@ contains
+     write(*,"(a,i8)")"       value:                ", sub_dof
+     stop
+   end subroutine monolis_stop_by_submatrix_access
++
++  !> Linear search helper with atomic add for thread-safe matrix assembly
++  subroutine monolis_search_and_add_atomic(item, A, ndof, jS, jE, cj, csub_i, csub_j, val)
++    implicit none
++    integer(kint), intent(in) :: ndof, jS, jE, cj, csub_i, csub_j
++    integer(kint), intent(in) :: item(:)
++    real(kdouble), intent(inout) :: A(:)
++    real(kdouble), intent(in) :: val
++    integer(kint) :: j, jn, im, NDOF2
++
++    NDOF2 = ndof*ndof
++
++    do j = jS, jE
++      jn = item(j)
++      if(jn == cj) then
++        im = NDOF2*(j-1) + ndof*(csub_i-1) + csub_j
++!$omp atomic update
++        A(im) = A(im) + val
++        return
++      endif
++    enddo
++
++    call monolis_stop_by_matrix_assemble(jS, cj)
++  end subroutine monolis_search_and_add_atomic
++
++  !> Thread-safe version of sparse matrix value addition using atomic operations
++  subroutine monolis_sparse_matrix_add_value_atomic(index, item, A, ndof, ci, cj, csub_i, csub_j, val)
++    implicit none
++    integer(kint), intent(in) :: ndof
++    integer(kint), intent(in) :: index(0:), item(:), ci, cj, csub_i, csub_j
++    real(kdouble), intent(inout) :: A(:)
++    real(kdouble), intent(in) :: val
++    integer(kint) :: jS, jE
++
++    if(ndof < csub_i) call monolis_stop_by_submatrix_access(ndof, csub_i)
++    if(ndof < csub_j) call monolis_stop_by_submatrix_access(ndof, csub_j)
++
++    jS = index(ci-1) + 1
++    jE = index(ci)
++
++    call monolis_search_and_add_atomic(item, A, ndof, jS, jE, cj, csub_i, csub_j, val)
++  end subroutine monolis_sparse_matrix_add_value_atomic
++
++  !> Public interface for atomic scalar addition
++  subroutine monolis_add_scalar_to_sparse_matrix_atomic(monolis, i, j, sub_i, sub_j, val)
++    implicit none
++    type(monolis_structure) :: monolis
++    integer(kint), intent(in) :: i, j, sub_i, sub_j
++    real(kdouble), intent(in) :: val
++
++    call monolis_sparse_matrix_add_value_atomic(monolis%MAT%index, monolis%MAT%item, monolis%MAT%A, &
++      & monolis%MAT%ndof, i, j, sub_i, sub_j, val)
++  end subroutine monolis_add_scalar_to_sparse_matrix_atomic
+ 
+ end module mod_monolis_sparse_util

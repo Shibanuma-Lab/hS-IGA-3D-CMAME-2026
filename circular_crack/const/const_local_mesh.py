@@ -5,7 +5,7 @@
 
 # Default values (dynamic mode)
 hL = 0.04 * 10**-3  # Length of local element [m]
-aL = 12
+aL = 16
 lL = 12
 HL = 15
 d_theta = 1.139240506329  # Angular resolution [degrees]
