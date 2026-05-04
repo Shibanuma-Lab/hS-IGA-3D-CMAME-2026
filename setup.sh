@@ -18,6 +18,7 @@
 #   FORCE_REBUILD_SOLVER=1    Rebuild monolis and sfem_linear even if binary exists
 #   SFEM_LINEAR_REPO=<url>    Override the sfem_linear clone URL
 #   SFEM_LINEAR_BRANCH=<name> Override the sfem_linear branch (default: tianyu_IGA)
+#   SKIP_SOLVER_UPDATE=1      Do not fetch/fast-forward an existing sfem_linear clone
 # ============================================================================
 
 set -euo pipefail  # Exit on error, unset variables, and failed pipelines
@@ -375,8 +376,14 @@ SOLVER_BIN="$SOLVER_DIR/bin/sfem_linear"
 SFEM_LINEAR_REPO="${SFEM_LINEAR_REPO:-git@gitlab.com:morita/sfem_linear.git}"
 SFEM_LINEAR_BRANCH="${SFEM_LINEAR_BRANCH:-tianyu_IGA}"
 MONOLIS_PATCH="$PROJECT_ROOT/patches/monolis-siga-atomic-openmp.patch"
+SOLVER_REPO_UPDATED=0
+MONOLIS_CHECKOUT_UPDATED=0
+MONOLIS_SOURCE_PATCHED=0
 
 prepare_sfem_linear_repo() {
+    local before_commit
+    local after_commit
+
     if [ ! -d "$SOLVER_DIR" ]; then
         print_warning "sfem_linear directory not found. Cloning from GitLab..."
         print_info "Cloning $SFEM_LINEAR_REPO..."
@@ -404,20 +411,74 @@ prepare_sfem_linear_repo() {
         print_error "$SOLVER_DIR exists but is not a git repository"
         exit 1
     fi
+
+    if [ "${SKIP_SOLVER_UPDATE:-0}" = "1" ]; then
+        print_warning "SKIP_SOLVER_UPDATE=1; leaving existing sfem_linear checkout unchanged"
+        return
+    fi
+
+    if ! git -C "$SOLVER_DIR" diff --quiet || ! git -C "$SOLVER_DIR" diff --cached --quiet; then
+        print_warning "sfem_linear has local changes; skipping automatic fast-forward update"
+        print_info "Commit/stash those changes, or use a clean clone, if this machine should match the latest solver exactly."
+        return
+    fi
+
+    print_info "Fetching latest sfem_linear/$SFEM_LINEAR_BRANCH..."
+    before_commit=$(git -C "$SOLVER_DIR" rev-parse HEAD)
+    if git -C "$SOLVER_DIR" fetch origin "$SFEM_LINEAR_BRANCH"; then
+        if git -C "$SOLVER_DIR" merge --ff-only "origin/$SFEM_LINEAR_BRANCH"; then
+            after_commit=$(git -C "$SOLVER_DIR" rev-parse HEAD)
+            if [ "$before_commit" != "$after_commit" ]; then
+                SOLVER_REPO_UPDATED=1
+            fi
+            print_success "sfem_linear is up to date with origin/$SFEM_LINEAR_BRANCH"
+        else
+            print_error "sfem_linear cannot fast-forward to origin/$SFEM_LINEAR_BRANCH"
+            print_info "Please resolve the local branch state manually, or reinstall with a clean sfem_linear directory."
+            exit 1
+        fi
+    else
+        print_warning "Could not fetch origin/$SFEM_LINEAR_BRANCH; continuing with the local sfem_linear checkout"
+    fi
 }
 
 ensure_monolis_source() {
     local monolis_dir="$SOLVER_DIR/submodule/monolis"
+    local expected_commit
+    local actual_commit
+    local before_commit
 
-    if [ ! -d "$monolis_dir" ] || [ -z "$(ls -A "$monolis_dir" 2>/dev/null)" ]; then
-        print_info "Initializing sfem_linear submodules..."
-        git -C "$SOLVER_DIR" submodule update --init --recursive
+    print_info "Syncing sfem_linear submodule URLs..."
+    git -C "$SOLVER_DIR" submodule sync --recursive
+
+    print_info "Checking out monolis version recorded by sfem_linear..."
+    before_commit=$(git -C "$monolis_dir" rev-parse HEAD 2>/dev/null || true)
+    if ! git -C "$SOLVER_DIR" submodule update --init --recursive; then
+        print_error "Failed to update sfem_linear submodules"
+        print_info "If this machine has an old patched monolis checkout, use a clean reinstall:"
+        print_info "  rm -rf sfem_linear"
+        print_info "  FORCE_REBUILD_SOLVER=1 ./setup.sh"
+        exit 1
     fi
 
     if [ ! -f "$monolis_dir/src/matrix/sparse_util.f90" ]; then
         print_error "monolis source was not initialized correctly"
         exit 1
     fi
+
+    expected_commit=$(git -C "$SOLVER_DIR" ls-tree HEAD submodule/monolis | awk '{print $3}')
+    actual_commit=$(git -C "$monolis_dir" rev-parse HEAD)
+    if [ "$before_commit" != "$actual_commit" ]; then
+        MONOLIS_CHECKOUT_UPDATED=1
+    fi
+
+    if [ "$expected_commit" != "$actual_commit" ]; then
+        print_error "monolis checkout does not match sfem_linear's recorded submodule commit"
+        print_info "Expected: $expected_commit"
+        print_info "Actual:   $actual_commit"
+        exit 1
+    fi
+    print_success "monolis matches sfem_linear submodule commit: $actual_commit"
 
     if grep -q "subroutine monolis_add_scalar_to_sparse_matrix_atomic" "$monolis_dir/src/matrix/sparse_util.f90" \
         && grep -q -- "-fopenmp" "$monolis_dir/Makefile"; then
@@ -433,6 +494,7 @@ ensure_monolis_source() {
     print_warning "monolis submodule lacks the required S-IGA compatibility changes. Applying project patch..."
     if git -C "$monolis_dir" apply --check "$MONOLIS_PATCH"; then
         git -C "$monolis_dir" apply "$MONOLIS_PATCH"
+        MONOLIS_SOURCE_PATCHED=1
         print_success "Applied monolis S-IGA compatibility patch"
     elif git -C "$monolis_dir" apply --reverse --check "$MONOLIS_PATCH"; then
         print_success "monolis compatibility patch is already applied"
@@ -522,6 +584,7 @@ existing_monolis_library_has_atomic_symbol() {
 }
 
 prepare_sfem_linear_repo
+ensure_monolis_source
 
 REBUILD_SOLVER=0
 if [ ! -f "$SOLVER_BIN" ]; then
@@ -529,6 +592,15 @@ if [ ! -f "$SOLVER_BIN" ]; then
     REBUILD_SOLVER=1
 elif [ "${FORCE_REBUILD_SOLVER:-0}" = "1" ]; then
     print_warning "FORCE_REBUILD_SOLVER=1; rebuilding solver and monolis"
+    REBUILD_SOLVER=1
+elif [ "$SOLVER_REPO_UPDATED" -eq 1 ]; then
+    print_warning "sfem_linear was updated during setup. Rebuilding solver and monolis..."
+    REBUILD_SOLVER=1
+elif [ "$MONOLIS_CHECKOUT_UPDATED" -eq 1 ]; then
+    print_warning "monolis checkout was updated during setup. Rebuilding solver and monolis..."
+    REBUILD_SOLVER=1
+elif [ "$MONOLIS_SOURCE_PATCHED" -eq 1 ]; then
+    print_warning "monolis source was patched during setup. Rebuilding solver and monolis..."
     REBUILD_SOLVER=1
 elif [ -f "$SOLVER_DIR/submodule/monolis/lib/libmonolis.a" ] && ! existing_monolis_library_has_atomic_symbol; then
     print_warning "Existing libmonolis.a lacks the atomic sparse-matrix symbol. Rebuilding solver and monolis..."
@@ -539,7 +611,6 @@ if [ "$REBUILD_SOLVER" -eq 1 ]; then
     if [ -f "$SOLVER_BIN" ] && [ "${FORCE_REBUILD_SOLVER:-0}" != "1" ]; then
         print_info "Rebuild is needed to keep future sfem_linear builds linkable"
     fi
-    ensure_monolis_source
     build_monolis
     build_solver
 else
