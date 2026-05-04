@@ -50,6 +50,7 @@ FIELDNAMES = [
 BASE_RGL = 8
 MIN_LL = 6
 SWEEP_GROUPS = ("rGL", "aL", "lL", "HL")
+TARGET_THETA_HL_RATIO = 2.0
 RGL_VALUES = [3, 4, 6, 8, 10]
 A_FACTORS = [
     ("15/10", 15.0 / 10.0),
@@ -59,11 +60,11 @@ A_FACTORS = [
     ("40/10", 40.0 / 10.0),
 ]
 LL_FACTORS = [
-    ("10/10", 10.0 / 10.0),
-    ("14/10", 14.0 / 10.0),
-    ("16/10", 16.0 / 10.0),
-    ("18/10", 18.0 / 10.0),
-    ("22/10", 22.0 / 10.0),
+    ("0.6*sqrt(2)", 0.6 * math.sqrt(2.0)),
+    ("0.8*sqrt(2)", 0.8 * math.sqrt(2.0)),
+    ("1.0*sqrt(2)", 1.0 * math.sqrt(2.0)),
+    ("1.2*sqrt(2)", 1.2 * math.sqrt(2.0)),
+    ("1.4*sqrt(2)", 1.4 * math.sqrt(2.0)),
 ]
 HL_FACTORS = [
     ("8/10", 8.0 / 10.0),
@@ -86,7 +87,7 @@ def baseline_aL(rGL=BASE_RGL):
 
 
 def baseline_lL(rGL=BASE_RGL):
-    return max(MIN_LL, ceil_scaled(12.0 / 10.0, rGL))
+    return max(MIN_LL, ceil_scaled(math.sqrt(2.0), rGL))
 
 
 def sweep_lL(factor, rGL=BASE_RGL):
@@ -141,9 +142,9 @@ def calculate_actual_hG(hL, rGL, mesh_constants):
 
 def calculate_uniform_theta(hL, reference_radius):
     """
-    Use the Section 5.2-style isotropic angular spacing:
+    Use a Section 5.2-style uniform angular spacing:
 
-        2*R_ref*sin(d_theta/2) = hL
+        2*R_ref*sin(d_theta/2) = target_ratio*hL
 
     In dynamic runs hL is dimensional, while the Section 5.2 static script uses
     a normalized crack radius of 1. Use the current crack radius as R_ref, then
@@ -155,11 +156,13 @@ def calculate_uniform_theta(hL, reference_radius):
     if reference_radius <= 0:
         raise ValueError(f"reference_radius must be positive, got {reference_radius}")
 
-    target_arg = hL / (2.0 * reference_radius)
+    target_length = TARGET_THETA_HL_RATIO * hL
+    target_arg = target_length / (2.0 * reference_radius)
     if target_arg > 1.0:
         raise ValueError(
-            f"hL={hL} is too large for reference_radius={reference_radius}: "
-            f"hL/(2R_ref)={target_arg:.6f} > 1."
+            f"target theta length={target_length} is too large for "
+            f"reference_radius={reference_radius}: "
+            f"target_length/(2R_ref)={target_arg:.6f} > 1."
         )
 
     target_theta_rad = 2.0 * math.asin(target_arg)
@@ -182,8 +185,9 @@ def calculate_uniform_theta(hL, reference_radius):
         "reference_radius": reference_radius,
         "hL_theta_max": hL_theta,
         "actual_ratio": actual_ratio,
-        "ratio_error": actual_ratio - 1.0,
-        "relative_ratio_error": actual_ratio - 1.0,
+        "ratio_error": actual_ratio - TARGET_THETA_HL_RATIO,
+        "relative_ratio_error": (actual_ratio - TARGET_THETA_HL_RATIO)
+        / TARGET_THETA_HL_RATIO,
     }
 
 
@@ -253,7 +257,7 @@ class SweepCase:
             "hL": hL,
             "theta_rule": "verification_5_2_uniform",
             "theta_reference_radius": self.theta_reference_radius,
-            "target_theta_hL_ratio": 1.0,
+            "target_theta_hL_ratio": TARGET_THETA_HL_RATIO,
             "d_theta": self.d_theta,
             "nLtheta": self.nLtheta,
             "hG": self.hG,
@@ -489,7 +493,7 @@ class DynamicParamSweep:
             print(f"hL: {self.hL:.12g}")
             print("Theta rule: Section 5.2-style uniform division")
             print(f"Theta reference radius: {self.theta_reference_radius:.12g}")
-            print("Target theta-direction length / hL: 1.0")
+            print(f"Target theta-direction length / hL: {TARGET_THETA_HL_RATIO:g}")
             if self.only_baseline:
                 print("Sweep groups: baseline only")
             else:

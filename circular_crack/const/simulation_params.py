@@ -18,7 +18,7 @@ c = 4.0e-3  # Crack radius [m]
 thi = 1.0  # Thickness [m]
 
 # Crack velocity (from param.txt)
-V = 1000.0  # Velocity [m/s]
+V = 500.0  # Velocity [m/s]
 
 # Step control
 step_start = 0  # stepini

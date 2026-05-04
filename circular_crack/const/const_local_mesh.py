@@ -5,10 +5,10 @@
 
 # Default values (dynamic mode)
 hL = 0.04 * 10**-3  # Length of local element [m]
-aL = 20  # Number of local elements on crack surface
-lL = 15  # Number of local elements on ligament surface
-HL = 18  # Number of local elements in thickness direction
-d_theta = 1.193684  # Angular resolution [degrees]
+aL = 12
+lL = 12
+HL = 15
+d_theta = 1.139240506329  # Angular resolution [degrees]
 
 # Static mode values (will be set by update_for_static_mode)
 # Note: Static mode uses dimensionless (normalized) units
