@@ -441,6 +441,14 @@ ensure_monolis_source() {
         print_info "Long-term fix: push the monolis changes and update sfem_linear's submodule pointer."
         exit 1
     fi
+
+    if grep -q "subroutine monolis_add_scalar_to_sparse_matrix_atomic" "$monolis_dir/src/matrix/sparse_util.f90" \
+        && grep -q -- "-fopenmp" "$monolis_dir/Makefile"; then
+        print_success "Verified monolis source compatibility changes"
+    else
+        print_error "monolis source compatibility changes are still missing after patch"
+        exit 1
+    fi
 }
 
 build_monolis() {
@@ -452,12 +460,13 @@ build_monolis() {
 
     print_info "Building monolis with MPI, METIS, and OpenMP support..."
     make clean > /dev/null 2>&1 || true
-    make FLAGS=MPI,METIS
+    make -B FLAGS=MPI,METIS
 
     if monolis_library_has_atomic_symbol "lib/libmonolis.a"; then
         print_success "Verified monolis atomic sparse-matrix symbol"
     else
         print_error "libmonolis.a does not contain the monolis atomic sparse-matrix module symbol"
+        print_monolis_atomic_diagnostics
         popd > /dev/null
         exit 1
     fi
@@ -482,7 +491,23 @@ monolis_library_has_atomic_symbol() {
     local monolis_lib="${1:-$SOLVER_DIR/submodule/monolis/lib/libmonolis.a}"
 
     [ -f "$monolis_lib" ] && \
-        nm -g "$monolis_lib" | grep -Eq "(__mod_monolis_sparse_util_MOD_monolis_add_scalar_to_sparse_matrix_atomic|monolis_add_scalar_to_sparse_matrix_atomic_)"
+        nm -a "$monolis_lib" 2>/dev/null | grep -Eiq "monolis_add_scalar_to_sparse_matrix_atomic"
+}
+
+print_monolis_atomic_diagnostics() {
+    print_info "Diagnostics for monolis atomic symbol:"
+    print_info "mpif90 wrapper:"
+    mpif90 --version | sed -n '1,3p' || true
+    mpif90 -show 2>/dev/null || true
+
+    print_info "Source check:"
+    grep -n "monolis_add_scalar_to_sparse_matrix_atomic" src/matrix/sparse_util.f90 || true
+
+    print_info "Object symbols containing atomic/add_scalar:"
+    nm -a obj/matrix/sparse_util.o 2>/dev/null | grep -Ei "atomic|add_scalar" || true
+
+    print_info "Archive symbols containing atomic/add_scalar:"
+    nm -a lib/libmonolis.a 2>/dev/null | grep -Ei "atomic|add_scalar" || true
 }
 
 existing_monolis_library_has_atomic_symbol() {
