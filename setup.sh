@@ -348,6 +348,48 @@ else
     exit 1
 fi
 
+if [ -f "requirements.txt" ]; then
+    print_info "Confirming Python dependencies from requirements.txt..."
+    if pipenv run pip install -r requirements.txt; then
+        print_success "requirements.txt dependencies installed!"
+    else
+        print_error "Failed to install requirements.txt dependencies!"
+        exit 1
+    fi
+fi
+
+print_info "Verifying required Python imports..."
+if pipenv run python - <<'PY'
+import importlib
+
+required_modules = [
+    "numpy",
+    "scipy",
+    "logzero",
+    "pandas",
+    "openpyxl",
+    "numba",
+    "matplotlib",
+]
+
+missing = []
+for module_name in required_modules:
+    try:
+        importlib.import_module(module_name)
+    except Exception as exc:
+        missing.append(f"{module_name}: {exc}")
+
+if missing:
+    raise SystemExit("Missing or broken Python dependencies:\n" + "\n".join(missing))
+PY
+then
+    print_success "Required Python imports verified"
+else
+    print_error "Python dependency verification failed!"
+    print_info "Try: pipenv install"
+    exit 1
+fi
+
 echo ""
 
 # ============================================================================
@@ -661,7 +703,7 @@ echo ""
 
 # Show installed packages
 print_info "Installed Python packages:"
-pipenv run pip list | grep -E "(numpy|scipy|logzero)" || true
+pipenv run pip list | grep -E "(numpy|scipy|logzero|pandas|openpyxl|numba|matplotlib)" || true
 echo ""
 
 print_success "You're all set! Happy computing! 🚀"

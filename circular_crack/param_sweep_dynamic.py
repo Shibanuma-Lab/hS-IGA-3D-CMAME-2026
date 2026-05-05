@@ -342,6 +342,7 @@ class DynamicParamSweep:
         force=False,
         postprocess=True,
         postprocess_skip_dsif=False,
+        postprocess_only=False,
         only_baseline=False,
         selected_groups=None,
     ):
@@ -357,6 +358,7 @@ class DynamicParamSweep:
         self.force = force
         self.postprocess = postprocess
         self.postprocess_skip_dsif = postprocess_skip_dsif
+        self.postprocess_only = postprocess_only
         self.only_baseline = only_baseline
         if selected_groups is None:
             self.selected_groups = set(SWEEP_GROUPS)
@@ -466,7 +468,7 @@ class DynamicParamSweep:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         const_editor = None
 
-        if not self.dry_run:
+        if not self.dry_run and not self.postprocess_only:
             self.cleanup_workdirs()
             const_editor = ConstFileEditor(SCRIPT_DIR)
 
@@ -503,6 +505,7 @@ class DynamicParamSweep:
             print(f"Summary CSV: {summary_path}")
             print(f"Dry run: {self.dry_run}")
             print(f"Postprocess: {self.postprocess}")
+            print(f"Postprocess only: {self.postprocess_only}")
 
             planned_folders = set()
             for case in cases:
@@ -516,6 +519,9 @@ class DynamicParamSweep:
     def handle_case(self, case, const_editor, planned_folders=None):
         folder = self.output_dir / f"v{case.velocity_label}" / case.folder_name
         folder_key = str(folder)
+
+        if self.postprocess_only:
+            return self.handle_postprocess_only_case(case, folder, planned_folders)
 
         if self.result_exists(folder):
             message = "Existing result folder contains the expected final-step outputs"
@@ -642,6 +648,51 @@ class DynamicParamSweep:
             seconds = time.time() - start_time
             return case.csv_row(folder, "failed", seconds, str(exc))
 
+    def handle_postprocess_only_case(self, case, folder, planned_folders=None):
+        folder_key = str(folder)
+
+        if planned_folders is not None and folder_key in planned_folders:
+            message = (
+                "Duplicate of an earlier planned case; "
+                "postprocess-only did not repeat the same folder"
+            )
+            print(
+                f"[{case.idx:02d}] DUP  {case.group:>3} {case.label}: "
+                f"same folder {folder}"
+            )
+            return case.csv_row(folder, "duplicate_postprocess", 0.0, message)
+
+        if not self.result_exists(folder, ignore_force=True):
+            message = "No existing final-step outputs; postprocess-only did not run simulation"
+            print(f"[{case.idx:02d}] MISS {case.group:>3} {case.label}: {folder}")
+            return case.csv_row(folder, "missing_result", 0.0, message)
+
+        if self.dry_run:
+            message = "Dry run only; postprocess was not executed"
+            print(
+                f"[{case.idx:02d}] DRY  {case.group:>3} {case.label}: "
+                f"would postprocess {folder}"
+            )
+            return case.csv_row(folder, "would_postprocess", 0.0, message)
+
+        print(f"[{case.idx:02d}] POST {case.group:>3} {case.label}: {folder}")
+        start_time = time.time()
+        try:
+            from postprocess_dynamic import postprocess_case
+
+            outputs = postprocess_case(
+                folder,
+                step=self.max_step,
+                skip_dsif=self.postprocess_skip_dsif,
+            )
+            seconds = time.time() - start_time
+            message = f"Postprocess completed; postprocess={outputs['summary']}"
+            return case.csv_row(folder, "postprocessed", seconds, message)
+        except Exception as exc:
+            seconds = time.time() - start_time
+            message = f"Postprocess failed: {exc}"
+            return case.csv_row(folder, "postprocess_failed", seconds, message)
+
     def clear_case_outputs(self, folder):
         for step in range(self.step_start, self.step_end):
             step_dir = folder / f"step{step:05d}"
@@ -687,8 +738,8 @@ class DynamicParamSweep:
                 shutil.rmtree(destination_input)
             shutil.copytree(source_input, destination_input)
 
-    def result_exists(self, folder):
-        if self.force or not folder.exists():
+    def result_exists(self, folder, ignore_force=False):
+        if (self.force and not ignore_force) or not folder.exists():
             return False
 
         final_step = self.step_end - 1
@@ -824,12 +875,20 @@ def parse_args():
     parser.add_argument(
         "--postprocess-skip-dsif",
         action="store_true",
-        help="With --postprocess, only calculate local-stress outputs",
+        help="With postprocess modes, only calculate local-stress outputs",
+    )
+    parser.add_argument(
+        "--postprocess-only",
+        action="store_true",
+        help=(
+            "Post-process existing sweep result folders only. "
+            "Missing result folders are recorded in the summary and main.py is not run."
+        ),
     )
     parser.add_argument(
         "--only-baseline",
         action="store_true",
-        help="Run only the baseline case rGL=8, aL=20, lL=10, HL=15",
+        help="Run only the baseline case rGL=8, aL=20, lL=12, HL=15",
     )
     parser.set_defaults(postprocess=True)
     return parser.parse_args()
@@ -860,6 +919,8 @@ def main():
         selected_groups = None
     if args.only_baseline and selected_groups is not None:
         raise ValueError("--only-baseline cannot be combined with --rGL/--aL/--lL/--HL")
+    if args.postprocess_only and not args.postprocess:
+        raise ValueError("--postprocess-only cannot be combined with --no-postprocess")
 
     sweep = DynamicParamSweep(
         velocities=args.velocities,
@@ -870,6 +931,7 @@ def main():
         force=args.force,
         postprocess=args.postprocess,
         postprocess_skip_dsif=args.postprocess_skip_dsif,
+        postprocess_only=args.postprocess_only,
         only_baseline=args.only_baseline,
         selected_groups=selected_groups,
     )
