@@ -47,6 +47,19 @@ FIELDNAMES = [
     "message",
 ]
 
+POSTPROCESS_LOCAL_FILES = (
+    "local_stress_cal.csv",
+    "local_stress_normalized_profile.csv",
+    "local_stress_ring_5hL.csv",
+)
+POSTPROCESS_DSIF_FILES = (
+    "hsiga_J.csv",
+    "hsiga_J_KId.csv",
+    "fem_reference_J.csv",
+    "fem_reference_J_KId.csv",
+    "dsif_normalized.csv",
+)
+
 BASE_RGL = 8
 MIN_LL = 6
 SWEEP_GROUPS = ("rGL", "aL", "lL", "HL")
@@ -527,6 +540,12 @@ class DynamicParamSweep:
             message = "Existing result folder contains the expected final-step outputs"
             print(f"[{case.idx:02d}] SKIP {case.group:>3} {case.label}: {folder}")
             if self.postprocess and not self.dry_run:
+                if self.postprocess_exists(folder, step=self.max_step):
+                    postprocess_dir = folder / "postprocess"
+                    message = f"{message}; postprocess already exists: {postprocess_dir}"
+                    print(f"     Postprocess already exists: {postprocess_dir}")
+                    return case.csv_row(folder, "skipped_postprocess_exists", 0.0, message)
+
                 try:
                     from postprocess_dynamic import postprocess_case
 
@@ -667,6 +686,12 @@ class DynamicParamSweep:
             print(f"[{case.idx:02d}] MISS {case.group:>3} {case.label}: {folder}")
             return case.csv_row(folder, "missing_result", 0.0, message)
 
+        if not self.force and self.postprocess_exists(folder, step=self.max_step):
+            postprocess_dir = folder / "postprocess"
+            message = f"Postprocess outputs already exist: {postprocess_dir}"
+            print(f"[{case.idx:02d}] PSKP {case.group:>3} {case.label}: {folder}")
+            return case.csv_row(folder, "postprocess_exists", 0.0, message)
+
         if self.dry_run:
             message = "Dry run only; postprocess was not executed"
             print(
@@ -692,6 +717,36 @@ class DynamicParamSweep:
             seconds = time.time() - start_time
             message = f"Postprocess failed: {exc}"
             return case.csv_row(folder, "postprocess_failed", seconds, message)
+
+    def expected_postprocess_files(self):
+        files = list(POSTPROCESS_LOCAL_FILES)
+        if not self.postprocess_skip_dsif:
+            files.extend(POSTPROCESS_DSIF_FILES)
+        return files
+
+    def missing_postprocess_outputs(self, folder):
+        postprocess_dir = folder / "postprocess"
+        missing = []
+        for name in self.expected_postprocess_files():
+            path = postprocess_dir / name
+            if (not path.exists()) or path.stat().st_size == 0:
+                missing.append(name)
+        return missing
+
+    def postprocess_exists(self, folder, step=None):
+        if self.missing_postprocess_outputs(folder):
+            return False
+
+        summary_path = folder / "postprocess" / "postprocess_summary.json"
+        if step is None or not summary_path.exists():
+            return True
+
+        try:
+            summary = json.loads(summary_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return False
+
+        return int(summary.get("step", -1)) == int(step)
 
     def clear_case_outputs(self, folder):
         for step in range(self.step_start, self.step_end):
