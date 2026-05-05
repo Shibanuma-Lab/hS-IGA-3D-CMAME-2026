@@ -418,6 +418,7 @@ SOLVER_BIN="$SOLVER_DIR/bin/sfem_linear"
 SFEM_LINEAR_REPO="${SFEM_LINEAR_REPO:-git@gitlab.com:morita/sfem_linear.git}"
 SFEM_LINEAR_BRANCH="${SFEM_LINEAR_BRANCH:-tianyu_IGA}"
 MONOLIS_PATCH="$PROJECT_ROOT/patches/monolis-siga-atomic-openmp.patch"
+MONOLIS_SOLVER_LIB="lib/libmonolis_solver.a"
 SOLVER_REPO_UPDATED=0
 MONOLIS_CHECKOUT_UPDATED=0
 MONOLIS_SOURCE_PATCHED=0
@@ -484,6 +485,38 @@ prepare_sfem_linear_repo() {
     fi
 }
 
+monolis_matrix_source_exists() {
+    local monolis_dir="$1"
+
+    [ -f "$monolis_dir/src/matrix/spmat_handler.f90" ] \
+        || [ -f "$monolis_dir/src/matrix/sparse_util.f90" ]
+}
+
+monolis_atomic_source_file() {
+    local monolis_dir="$1"
+    local candidate
+
+    for candidate in \
+        "$monolis_dir/src/matrix/spmat_handler.f90" \
+        "$monolis_dir/src/matrix/sparse_util.f90"
+    do
+        if [ -f "$candidate" ] \
+            && grep -q "subroutine monolis_add_scalar_to_sparse_matrix_atomic" "$candidate"; then
+            printf "%s\n" "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+monolis_source_has_siga_compatibility() {
+    local monolis_dir="$1"
+
+    monolis_atomic_source_file "$monolis_dir" > /dev/null \
+        && grep -q -- "-fopenmp" "$monolis_dir/Makefile"
+}
+
 ensure_monolis_source() {
     local monolis_dir="$SOLVER_DIR/submodule/monolis"
     local expected_commit
@@ -503,7 +536,7 @@ ensure_monolis_source() {
         exit 1
     fi
 
-    if [ ! -f "$monolis_dir/src/matrix/sparse_util.f90" ]; then
+    if ! monolis_matrix_source_exists "$monolis_dir"; then
         print_error "monolis source was not initialized correctly"
         exit 1
     fi
@@ -522,10 +555,16 @@ ensure_monolis_source() {
     fi
     print_success "monolis matches sfem_linear submodule commit: $actual_commit"
 
-    if grep -q "subroutine monolis_add_scalar_to_sparse_matrix_atomic" "$monolis_dir/src/matrix/sparse_util.f90" \
-        && grep -q -- "-fopenmp" "$monolis_dir/Makefile"; then
+    if monolis_source_has_siga_compatibility "$monolis_dir"; then
         print_success "monolis already contains the S-IGA atomic sparse-matrix addition and OpenMP flags"
         return
+    fi
+
+    if [ ! -f "$monolis_dir/src/matrix/sparse_util.f90" ]; then
+        print_error "monolis submodule lacks the required S-IGA compatibility changes"
+        print_info "This checkout uses the newer Monolis source layout, so the legacy project patch cannot be applied."
+        print_info "Long-term fix: push the monolis changes and update sfem_linear's submodule pointer."
+        exit 1
     fi
 
     if [ ! -f "$MONOLIS_PATCH" ]; then
@@ -546,8 +585,7 @@ ensure_monolis_source() {
         exit 1
     fi
 
-    if grep -q "subroutine monolis_add_scalar_to_sparse_matrix_atomic" "$monolis_dir/src/matrix/sparse_util.f90" \
-        && grep -q -- "-fopenmp" "$monolis_dir/Makefile"; then
+    if monolis_source_has_siga_compatibility "$monolis_dir"; then
         print_success "Verified monolis source compatibility changes"
     else
         print_error "monolis source compatibility changes are still missing after patch"
@@ -566,10 +604,10 @@ build_monolis() {
     make clean > /dev/null 2>&1 || true
     make -B FLAGS=MPI,METIS
 
-    if monolis_library_has_atomic_symbol "lib/libmonolis.a"; then
+    if monolis_library_has_atomic_symbol "$MONOLIS_SOLVER_LIB"; then
         print_success "Verified monolis atomic sparse-matrix symbol"
     else
-        print_error "libmonolis.a does not contain the monolis atomic sparse-matrix module symbol"
+        print_error "$MONOLIS_SOLVER_LIB does not contain the monolis atomic sparse-matrix module symbol"
         print_monolis_atomic_diagnostics
         popd > /dev/null
         exit 1
@@ -592,7 +630,7 @@ build_solver() {
 }
 
 monolis_library_has_atomic_symbol() {
-    local monolis_lib="${1:-$SOLVER_DIR/submodule/monolis/lib/libmonolis.a}"
+    local monolis_lib="${1:-$SOLVER_DIR/submodule/monolis/$MONOLIS_SOLVER_LIB}"
     local symbols
 
     if [ ! -f "$monolis_lib" ]; then
@@ -610,17 +648,20 @@ print_monolis_atomic_diagnostics() {
     mpif90 -show 2>/dev/null || true
 
     print_info "Source check:"
-    grep -n "monolis_add_scalar_to_sparse_matrix_atomic" src/matrix/sparse_util.f90 || true
+    grep -n "monolis_add_scalar_to_sparse_matrix_atomic" \
+        src/matrix/spmat_handler.f90 \
+        src/matrix/sparse_util.f90 2>/dev/null || true
 
     print_info "Object symbols containing atomic/add_scalar:"
-    nm -a obj/matrix/sparse_util.o 2>/dev/null | grep -Ei "atomic|add_scalar" || true
+    nm -a obj/matrix/spmat_handler.o obj/matrix/sparse_util.o 2>/dev/null \
+        | grep -Ei "atomic|add_scalar" || true
 
     print_info "Archive symbols containing atomic/add_scalar:"
-    nm -a lib/libmonolis.a 2>/dev/null | grep -Ei "atomic|add_scalar" || true
+    nm -a "$MONOLIS_SOLVER_LIB" 2>/dev/null | grep -Ei "atomic|add_scalar" || true
 }
 
 existing_monolis_library_has_atomic_symbol() {
-    local monolis_lib="$SOLVER_DIR/submodule/monolis/lib/libmonolis.a"
+    local monolis_lib="$SOLVER_DIR/submodule/monolis/$MONOLIS_SOLVER_LIB"
 
     monolis_library_has_atomic_symbol "$monolis_lib"
 }
@@ -644,8 +685,11 @@ elif [ "$MONOLIS_CHECKOUT_UPDATED" -eq 1 ]; then
 elif [ "$MONOLIS_SOURCE_PATCHED" -eq 1 ]; then
     print_warning "monolis source was patched during setup. Rebuilding solver and monolis..."
     REBUILD_SOLVER=1
-elif [ -f "$SOLVER_DIR/submodule/monolis/lib/libmonolis.a" ] && ! existing_monolis_library_has_atomic_symbol; then
-    print_warning "Existing libmonolis.a lacks the atomic sparse-matrix symbol. Rebuilding solver and monolis..."
+elif [ ! -f "$SOLVER_DIR/submodule/monolis/$MONOLIS_SOLVER_LIB" ]; then
+    print_warning "Monolis solver library not found. Rebuilding solver and monolis..."
+    REBUILD_SOLVER=1
+elif ! existing_monolis_library_has_atomic_symbol; then
+    print_warning "Existing $MONOLIS_SOLVER_LIB lacks the atomic sparse-matrix symbol. Rebuilding solver and monolis..."
     REBUILD_SOLVER=1
 fi
 

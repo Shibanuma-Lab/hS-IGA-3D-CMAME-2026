@@ -1,5 +1,6 @@
 import os
 import argparse
+import sys
 import numpy as np
 from const import const_local_mesh as clm, const_global_mesh, simulation_params as sp
 from const import const_jintegral as cji, material_property as mp
@@ -295,6 +296,7 @@ Examples:
     
     # Main execution loop
     step_list = range(step_start, step_end)
+    all_success = True
     for step in step_list:
         logger.info("")
         logger.info("="*60)
@@ -333,9 +335,15 @@ Examples:
         # Run solver (unless meshonly mode)
         if not args.meshonly:
             logger.info(f"Running solver for step {step}")
-            linux_command.run(step)
+            if not linux_command.run(step):
+                all_success = False
+                logger.error(f"Stopping because solver failed at step {step}")
+                break
         else:
             logger.info(f"Skipping solver (meshonly mode)")
+
+    if not all_success:
+        sys.exit(1)
     
     logger.info("")
     logger.info("="*60)
