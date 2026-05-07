@@ -6,27 +6,26 @@ using local mesh coarsened in the crack front direction
 Based on the paper's Figure 16 and 17 methodology
 
 This script studies the effect of the crack-front-direction element size on
-the solution accuracy. Section 5.3 now varies the target ratio
+the solution accuracy. Section 5.3 varies the target ratio
 
-    hL_theta_max / hG = x
+    crack-front-direction element size / crack-plane element size = x
 
-where hL_theta_max is the chord length of the outermost local element in the
-theta direction. Because the local mesh is a quarter annulus, the actual input
-d_theta must divide 90 degrees. For each requested x, this script selects the
-nearest admissible d_theta = 90 / nLtheta.
+using the same theta rule as Section 5.2:
+
+    2*sin(d_theta/2) = x*hL
 
 Paper parameters (Section 5.3):
 - Local mesh dimensions: WL=0.5, aL=0.25, lL=0.25, HL=0.25
 - Fixed nominal rGL = 4
 - Two mesh configurations:
   a) hL = 1/48
-  b) hL = 1/96
+  b) hL = 1/88
 - Global control point overrides:
   a) (27, 27, 15)
-  b) (51, 51, 27)
-- Target hL_theta_max/hG ratios to test: 0.4, 0.8, 1.2, 1.6, 2.0, 2.4, 2.8
+  b) (47, 47, 24)
+- Target crack-front/crack-plane element-size ratios to test: 1.5, 2, 2.5, 3, 4
 
-Total: 7 target ratios × 2 mesh configs = 14 cases
+Total: 5 target ratios × 2 mesh configs = 10 cases
 """
 
 import math
@@ -67,20 +66,19 @@ class Verification53:
         self.static_heightG = 1.0
 
         # Two mesh configurations
-        self.hL_values = [1.0/48.0, 1.0/96.0]
+        self.hL_values = [1.0/48.0, 1.0/88.0]
 
-        # Target ratios x = hL_theta_max / hG.
-        # The actual d_theta is adjusted per hL so that 90/d_theta is integer.
-        self.target_ratio_values = [0.4, 0.8, 1.2, 1.6, 2.0, 2.4, 2.8]
+        # Target ratios x for 2*sin(d_theta/2) = x*hL.
+        self.target_ratio_values = [1.5, 2.0, 2.5, 3.0, 4.0]
 
         # Section 5.3 special global mesh settings (control points).
         # The user's requested pairs are interpreted as:
         #   hL=1/48  -> (nPtsX, nPtsZ) = (27, 15)
-        #   hL=1/96  -> (nPtsX, nPtsZ) = (51, 27)
+        #   hL=1/88  -> (nPtsX, nPtsZ) = (47, 24)
         # and we keep XY symmetry by setting nPtsY = nPtsX.
         self.global_npts_overrides = {
             48: (27, 27, 15),  # (nPtsX, nPtsY, nPtsZ)
-            96: (51, 51, 27)
+            88: (47, 47, 24)
         }
         
         # Skip existing results
@@ -123,8 +121,7 @@ class Verification53:
         Calculate actual global element sizes from static nPts overrides.
 
         For open quadratic B-splines, the number of elements in X is nPtsX-p,
-        so the X-direction element size is Lx/(nPtsX-p). This is the hG used
-        for the hL_theta_max/hG ratio in Section 5.3.
+        so the X-direction element size is Lx/(nPtsX-p).
         """
         nPtsX, nPtsY, nPtsZ = global_npts
         Lx, Ly, Lz = self.get_static_domain_lengths()
@@ -143,24 +140,24 @@ class Verification53:
             'Lz': Lz,
         }
 
-    def calculate_theta_from_ratio(self, target_ratio, hG, hL, local_elems):
+    def calculate_theta_from_ratio(self, target_ratio, hL):
         """
-        Calculate the nearest admissible d_theta for target hL_theta_max/hG.
+        Calculate d_theta from the Section 5.2-style crack-front ratio rule.
 
-        hL_theta_max = 2 * R * sin(theta/2), where
-        R = c + lL*hL is the outer radius of the local mesh. The continuous
-        target angle is theta = 2*asin(target_ratio*hG/(2*R)). The actual
-        input angle must be 90/nLtheta degrees.
+        2*sin(d_theta/2) = target_ratio*hL
+
+        local_mesh.py converts the input d_theta to nLtheta by round(90/d_theta)
+        and then spaces the actual local mesh uniformly over 90 degrees, so this
+        method records both the exact input d_theta and the rounded actual value.
         """
         if target_ratio <= 0:
             raise ValueError(f"target_ratio must be positive, got {target_ratio}")
 
-        outer_radius = self.static_c + local_elems['lL'] * hL
-        target_arg = target_ratio * hG / (2.0 * outer_radius)
+        target_arg = target_ratio * hL / 2.0
         if target_arg > 1.0:
             raise ValueError(
                 f"target_ratio={target_ratio} is too large: "
-                f"target_ratio*hG/(2R)={target_arg:.6f} > 1."
+                f"target_ratio*hL/2={target_arg:.6f} > 1."
             )
 
         target_theta_rad = 2.0 * math.asin(target_arg)
@@ -170,36 +167,23 @@ class Verification53:
                 f"target_ratio={target_ratio} produced non-positive target theta."
             )
 
-        ideal_nLtheta = 90.0 / target_theta_deg
-        center = max(1, int(round(ideal_nLtheta)))
-        candidate_min = max(1, center - 4)
-        candidate_max = center + 4
+        nLtheta = max(1, int(round(90.0 / target_theta_deg)))
+        actual_d_theta = 90.0 / nLtheta
+        theta_element_size = 2.0 * math.sin(math.radians(actual_d_theta) / 2.0)
+        actual_ratio = theta_element_size / hL
+        ratio_error = actual_ratio - target_ratio
 
-        best = None
-        for nLtheta in range(candidate_min, candidate_max + 1):
-            d_theta = 90.0 / nLtheta
-            hL_theta_max = 2.0 * outer_radius * math.sin(math.radians(d_theta) / 2.0)
-            actual_ratio = hL_theta_max / hG
-            ratio_error = actual_ratio - target_ratio
-            theta_error = d_theta - target_theta_deg
-            score = (abs(ratio_error), abs(theta_error), nLtheta)
-
-            if best is None or score < best['score']:
-                best = {
-                    'score': score,
-                    'target_ratio': target_ratio,
-                    'target_d_theta': target_theta_deg,
-                    'd_theta': d_theta,
-                    'nLtheta': nLtheta,
-                    'outer_radius': outer_radius,
-                    'hL_theta_max': hL_theta_max,
-                    'actual_ratio': actual_ratio,
-                    'ratio_error': ratio_error,
-                    'relative_ratio_error': ratio_error / target_ratio,
-                }
-
-        best.pop('score')
-        return best
+        return {
+            'target_ratio': target_ratio,
+            'target_d_theta': target_theta_deg,
+            'd_theta': target_theta_deg,
+            'nLtheta': nLtheta,
+            'actual_d_theta': actual_d_theta,
+            'theta_element_size': theta_element_size,
+            'actual_ratio': actual_ratio,
+            'ratio_error': ratio_error,
+            'relative_ratio_error': ratio_error / target_ratio,
+        }
 
     def build_case_parameters(self, hL, target_ratio):
         """
@@ -209,9 +193,7 @@ class Verification53:
         global_npts = self.get_global_npts_override(hL)
         global_mesh_sizes = self.calculate_global_mesh_sizes(global_npts)
         hG = global_mesh_sizes['hGx']
-        theta_info = self.calculate_theta_from_ratio(
-            target_ratio, hG, hL, local_elems
-        )
+        theta_info = self.calculate_theta_from_ratio(target_ratio, hL)
 
         return {
             'hL': hL,
@@ -360,7 +342,7 @@ class Verification53:
         
         Args:
             hL: Local element size
-            target_ratio: Requested hL_theta_max/hG ratio
+            target_ratio: Requested crack-front/crack-plane element-size ratio
             d_theta: Angular resolution (degrees)
             
         Returns:
@@ -436,7 +418,8 @@ class Verification53:
             'timestamp': datetime.now().isoformat(),
             'section': '5.3',
             'status': status,
-            'description': 'Verification using target hL_theta_max/hG ratios',
+            'description': 'Verification using target crack-front/crack-plane element-size ratios',
+            'theta_rule': '2*sin(d_theta/2) = target_ratio*hL',
             'domain_scale': self.domain_scale,
             'hL': case['hL'],
             'hG': case['hG'],
@@ -447,8 +430,8 @@ class Verification53:
             'target_d_theta': case['target_d_theta'],
             'd_theta': case['d_theta'],
             'nLtheta': case['nLtheta'],
-            'outer_radius': case['outer_radius'],
-            'hL_theta_max': case['hL_theta_max'],
+            'actual_d_theta': case['actual_d_theta'],
+            'theta_element_size': case['theta_element_size'],
             'actual_ratio': case['actual_ratio'],
             'ratio_error': case['ratio_error'],
             'relative_ratio_error': case['relative_ratio_error'],
@@ -558,11 +541,11 @@ class Verification53:
     
     def run_single_case(self, hL, target_ratio):
         """
-        Run a single case with given hL and target hL_theta_max/hG ratio
+        Run a single case with given hL and target crack-front/crack-plane ratio
         
         Args:
             hL: Local element size
-            target_ratio: Requested hL_theta_max/hG ratio
+            target_ratio: Requested crack-front/crack-plane element-size ratio
             
         Returns:
             Case status: "completed", "skipped", or "failed"
@@ -585,10 +568,11 @@ class Verification53:
         print(f"  actual hG/hL = {case['actual_rGL']:.6f}")
         print(f"  hL = {hL:.8f}")
         print(f"  hG = Lx/(nPtsX-{cgm.p}) = {hG:.8f}")
-        print(f"  target hL_theta_max/hG = {target_ratio:.6f}")
-        print(f"  actual hL_theta_max/hG = {case['actual_ratio']:.6f}")
-        print(f"  hL_theta_max = {case['hL_theta_max']:.8f}")
-        print(f"  d_theta = {d_theta:.6f}° (nLtheta={case['nLtheta']})")
+        print(f"  target theta/hL ratio = {target_ratio:.6f}")
+        print(f"  actual theta/hL ratio = {case['actual_ratio']:.6f}")
+        print(f"  theta element size = {case['theta_element_size']:.8f}")
+        print(f"  d_theta input = {d_theta:.6f}°")
+        print(f"  nLtheta = {case['nLtheta']}, actual d_theta = {case['actual_d_theta']:.6f}°")
         print(f"  Global control points: nPtsX={global_npts[0]}, nPtsY={global_npts[1]}, nPtsZ={global_npts[2]}")
         print(f"  Local elements: aL={local_elems['aL']}, lL={local_elems['lL']}, HL={local_elems['HL']}")
         print(f"  Estimated DOF: {est_DOF:,}")
@@ -627,13 +611,13 @@ class Verification53:
         """
         print(f"\n{'='*80}")
         print(f"Section 5.3 Verification")
-        print(f"Study of hL_theta_max/hG effect on solution accuracy")
+        print(f"Study of crack-front/crack-plane element-size ratio effect on solution accuracy")
         print(f"{'='*80}")
         print(f"\nConfiguration:")
         print(f"  nominal rGL = {self.rGL}")
         print(f"  rBL = {self.rBL}")
         print(f"  hL values: {self.hL_values}")
-        print(f"  target hL_theta_max/hG ratios: {self.target_ratio_values}")
+        print(f"  target theta/hL ratios: {self.target_ratio_values}")
         print(f"  Total cases: {len(self.hL_values) * len(self.target_ratio_values)}")
         print(f"  Skip existing: {self.skip_existing}")
         print(f"  Results directory: {self.base_results_dir}")
@@ -710,9 +694,9 @@ def main():
     parser.add_argument(
         '--hL',
         type=str,
-        choices=['48', '96', 'all'],
+        choices=['48', '88', 'all'],
         default='all',
-        help='Which hL config to run: 48 (1/48), 96 (1/96), or all (default: all)'
+        help='Which hL config to run: 48 (1/48), 88 (1/88), or all (default: all)'
     )
     parser.add_argument(
         '--ratios',
@@ -720,7 +704,7 @@ def main():
         dest='ratios',
         type=float,
         nargs='+',
-        help='Run only specific target hL_theta_max/hG ratio(s), e.g. --ratios 1.0 1.4'
+        help='Run only specific target theta/hL ratio(s), e.g. --ratios 1.5 2.5'
     )
     
     args = parser.parse_args()
@@ -735,8 +719,8 @@ def main():
     if args.hL != 'all':
         if args.hL == '48':
             verif.hL_values = [1.0/48.0]
-        elif args.hL == '96':
-            verif.hL_values = [1.0/96.0]
+        elif args.hL == '88':
+            verif.hL_values = [1.0/88.0]
     
     # Filter target ratios if specified
     if args.ratios is not None:
