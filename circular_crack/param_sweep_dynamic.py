@@ -356,6 +356,7 @@ class DynamicParamSweep:
         postprocess=True,
         postprocess_skip_dsif=False,
         postprocess_only=False,
+        postprocess_steps=None,
         only_baseline=False,
         selected_groups=None,
     ):
@@ -372,6 +373,7 @@ class DynamicParamSweep:
         self.postprocess = postprocess
         self.postprocess_skip_dsif = postprocess_skip_dsif
         self.postprocess_only = postprocess_only
+        self.postprocess_steps = self.normalize_postprocess_steps(postprocess_steps)
         self.only_baseline = only_baseline
         if selected_groups is None:
             self.selected_groups = set(SWEEP_GROUPS)
@@ -380,6 +382,64 @@ class DynamicParamSweep:
             invalid = self.selected_groups - set(SWEEP_GROUPS)
             if invalid:
                 raise ValueError(f"Unknown sweep group(s): {', '.join(sorted(invalid))}")
+
+    def normalize_postprocess_steps(self, postprocess_steps):
+        if postprocess_steps is None:
+            return [self.max_step]
+
+        normalized = []
+        seen = set()
+        for step in postprocess_steps:
+            step = int(step)
+            if step < self.step_start or step > self.max_step:
+                raise ValueError(
+                    f"Postprocess step {step} is outside the run range "
+                    f"{self.step_start}..{self.max_step}"
+                )
+            if step not in seen:
+                normalized.append(step)
+                seen.add(step)
+
+        if not normalized:
+            raise ValueError("--postprocess-steps must include at least one step")
+        return normalized
+
+    def use_step_postprocess_dirs(self):
+        return len(self.postprocess_steps) != 1 or self.postprocess_steps[0] != self.max_step
+
+    def postprocess_output_dir(self, folder, step):
+        postprocess_dir = Path(folder) / "postprocess"
+        if self.use_step_postprocess_dirs():
+            return postprocess_dir / f"step{int(step):05d}"
+        return postprocess_dir
+
+    def postprocess_steps_label(self):
+        return ", ".join(str(step) for step in self.postprocess_steps)
+
+    def format_postprocess_summary(self, folder, outputs_by_step):
+        parts = []
+        folder = Path(folder)
+        for step in self.postprocess_steps:
+            summary = Path(outputs_by_step[step]["summary"])
+            try:
+                summary = summary.relative_to(folder)
+            except ValueError:
+                pass
+            parts.append(f"step{step}: {summary}")
+        return "; ".join(parts)
+
+    def run_postprocess(self, folder):
+        from postprocess_dynamic import postprocess_case
+
+        outputs_by_step = {}
+        for step in self.postprocess_steps:
+            outputs_by_step[step] = postprocess_case(
+                folder,
+                step=step,
+                output_dir=self.postprocess_output_dir(folder, step),
+                skip_dsif=self.postprocess_skip_dsif,
+            )
+        return outputs_by_step
 
     def build_cases_for_velocity(self, velocity):
         cases = []
@@ -519,6 +579,10 @@ class DynamicParamSweep:
             print(f"Dry run: {self.dry_run}")
             print(f"Postprocess: {self.postprocess}")
             print(f"Postprocess only: {self.postprocess_only}")
+            if self.postprocess:
+                print(f"Postprocess steps: {self.postprocess_steps_label()}")
+                if self.use_step_postprocess_dirs():
+                    print("Postprocess layout: postprocess/stepNNNNN/")
 
             planned_folders = set()
             for case in cases:
@@ -540,21 +604,18 @@ class DynamicParamSweep:
             message = "Existing result folder contains the expected final-step outputs"
             print(f"[{case.idx:02d}] SKIP {case.group:>3} {case.label}: {folder}")
             if self.postprocess and not self.dry_run:
-                if self.postprocess_exists(folder, step=self.max_step):
+                if self.postprocess_exists(folder):
                     postprocess_dir = folder / "postprocess"
-                    message = f"{message}; postprocess already exists: {postprocess_dir}"
+                    message = f"{message}; requested postprocess already exists: {postprocess_dir}"
                     print(f"     Postprocess already exists: {postprocess_dir}")
                     return case.csv_row(folder, "skipped_postprocess_exists", 0.0, message)
 
                 try:
-                    from postprocess_dynamic import postprocess_case
-
-                    outputs = postprocess_case(
-                        folder,
-                        step=self.max_step,
-                        skip_dsif=self.postprocess_skip_dsif,
+                    outputs = self.run_postprocess(folder)
+                    message = (
+                        f"{message}; postprocess="
+                        f"{self.format_postprocess_summary(folder, outputs)}"
                     )
-                    message = f"{message}; postprocess={outputs['summary']}"
                     return case.csv_row(folder, "skipped_postprocessed", 0.0, message)
                 except Exception as exc:
                     message = f"{message}; postprocess failed: {exc}"
@@ -647,14 +708,11 @@ class DynamicParamSweep:
 
             if self.postprocess:
                 try:
-                    from postprocess_dynamic import postprocess_case
-
-                    outputs = postprocess_case(
-                        folder,
-                        step=self.max_step,
-                        skip_dsif=self.postprocess_skip_dsif,
+                    outputs = self.run_postprocess(folder)
+                    message = (
+                        "Completed; postprocess="
+                        f"{self.format_postprocess_summary(folder, outputs)}"
                     )
-                    message = f"Completed; postprocess={outputs['summary']}"
                     return case.csv_row(folder, "done_postprocessed", seconds, message)
                 except Exception as exc:
                     message = f"Simulation completed, but postprocess failed: {exc}"
@@ -686,9 +744,9 @@ class DynamicParamSweep:
             print(f"[{case.idx:02d}] MISS {case.group:>3} {case.label}: {folder}")
             return case.csv_row(folder, "missing_result", 0.0, message)
 
-        if not self.force and self.postprocess_exists(folder, step=self.max_step):
+        if not self.force and self.postprocess_exists(folder):
             postprocess_dir = folder / "postprocess"
-            message = f"Postprocess outputs already exist: {postprocess_dir}"
+            message = f"Requested postprocess outputs already exist: {postprocess_dir}"
             print(f"[{case.idx:02d}] PSKP {case.group:>3} {case.label}: {folder}")
             return case.csv_row(folder, "postprocess_exists", 0.0, message)
 
@@ -696,22 +754,22 @@ class DynamicParamSweep:
             message = "Dry run only; postprocess was not executed"
             print(
                 f"[{case.idx:02d}] DRY  {case.group:>3} {case.label}: "
-                f"would postprocess {folder}"
+                f"would postprocess {folder} at steps {self.postprocess_steps_label()}"
             )
             return case.csv_row(folder, "would_postprocess", 0.0, message)
 
-        print(f"[{case.idx:02d}] POST {case.group:>3} {case.label}: {folder}")
+        print(
+            f"[{case.idx:02d}] POST {case.group:>3} {case.label}: "
+            f"{folder} (steps {self.postprocess_steps_label()})"
+        )
         start_time = time.time()
         try:
-            from postprocess_dynamic import postprocess_case
-
-            outputs = postprocess_case(
-                folder,
-                step=self.max_step,
-                skip_dsif=self.postprocess_skip_dsif,
-            )
+            outputs = self.run_postprocess(folder)
             seconds = time.time() - start_time
-            message = f"Postprocess completed; postprocess={outputs['summary']}"
+            message = (
+                "Postprocess completed; postprocess="
+                f"{self.format_postprocess_summary(folder, outputs)}"
+            )
             return case.csv_row(folder, "postprocessed", seconds, message)
         except Exception as exc:
             seconds = time.time() - start_time
@@ -724,29 +782,37 @@ class DynamicParamSweep:
             files.extend(POSTPROCESS_DSIF_FILES)
         return files
 
-    def missing_postprocess_outputs(self, folder):
-        postprocess_dir = folder / "postprocess"
+    def missing_postprocess_outputs(self, folder, step):
+        postprocess_dir = self.postprocess_output_dir(folder, step)
         missing = []
         for name in self.expected_postprocess_files():
             path = postprocess_dir / name
             if (not path.exists()) or path.stat().st_size == 0:
-                missing.append(name)
+                missing.append(str(path.relative_to(Path(folder) / "postprocess")))
         return missing
 
     def postprocess_exists(self, folder, step=None):
-        if self.missing_postprocess_outputs(folder):
-            return False
+        steps = [int(step)] if step is not None else self.postprocess_steps
+        for postprocess_step in steps:
+            if self.missing_postprocess_outputs(folder, postprocess_step):
+                return False
 
-        summary_path = folder / "postprocess" / "postprocess_summary.json"
-        if step is None or not summary_path.exists():
-            return True
+            summary_path = self.postprocess_output_dir(
+                folder,
+                postprocess_step,
+            ) / "postprocess_summary.json"
+            if not summary_path.exists():
+                return False
 
-        try:
-            summary = json.loads(summary_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return False
+            try:
+                summary = json.loads(summary_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                return False
 
-        return int(summary.get("step", -1)) == int(step)
+            if int(summary.get("step", -1)) != int(postprocess_step):
+                return False
+
+        return True
 
     def clear_case_outputs(self, folder):
         for step in range(self.step_start, self.step_end):
@@ -941,6 +1007,17 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--postprocess-steps",
+        type=int,
+        nargs="+",
+        default=None,
+        help=(
+            "Dynamic steps to post-process. Defaults to --max-step. "
+            "When more than one step is requested, outputs are written to "
+            "postprocess/stepNNNNN inside each case folder."
+        ),
+    )
+    parser.add_argument(
         "--only-baseline",
         action="store_true",
         help="Run only the baseline case rGL=8, aL=20, lL=12, HL=15",
@@ -987,6 +1064,7 @@ def main():
         postprocess=args.postprocess,
         postprocess_skip_dsif=args.postprocess_skip_dsif,
         postprocess_only=args.postprocess_only,
+        postprocess_steps=args.postprocess_steps,
         only_baseline=args.only_baseline,
         selected_groups=selected_groups,
     )

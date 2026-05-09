@@ -18,6 +18,7 @@ import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -31,6 +32,9 @@ from const import const_local_mesh as clm
 from const import material_property as mp
 from const import simulation_params as sp
 from jintegral import FEMReferenceJIntegralCalculator, JIntegralCalculator
+
+FEM_LOCAL_STRESS_DIR = SCRIPT_DIR / "data" / "FEM_local_stress"
+FEM_LOCAL_STRESS_PROFILE_STEP = 100
 
 
 @dataclass
@@ -48,6 +52,20 @@ class CaseConfig:
     @property
     def final_step(self):
         return self.step_end - 1
+
+
+@dataclass
+class FEMLocalStressReference:
+    profile_distance_mm: Optional[np.ndarray]
+    profile_stress: Optional[np.ndarray]
+    profile_source: Optional[str]
+    ring5_distance_mm: float
+    ring5_stress: float
+    ring5_source: str
+
+    @property
+    def has_profile(self):
+        return self.profile_distance_mm is not None and self.profile_stress is not None
 
 
 def load_case_config(case_folder):
@@ -119,15 +137,110 @@ def local_stress_from_reaction(case_folder, config, step):
     return distance_hL, theta_deg, stress_distance_theta
 
 
-def load_fem_local_stress(velocity):
+def fem_velocity_label(velocity):
     v_label = int(round(float(velocity)))
-    path = SCRIPT_DIR / "data" / "FEM_local_stress" / f"FEM_v_{v_label}_last.xlsx"
+    return v_label
+
+
+def fem_local_stress_profile_path(velocity):
+    v_label = fem_velocity_label(velocity)
+    return FEM_LOCAL_STRESS_DIR / f"FEM_v_{v_label}_last.xlsx"
+
+
+def fem_local_stress_history_path(velocity):
+    v_label = fem_velocity_label(velocity)
+    return FEM_LOCAL_STRESS_DIR / f"FEM_v_{v_label}_list_5.xlsx"
+
+
+def load_fem_local_stress_profile(velocity):
+    path = fem_local_stress_profile_path(velocity)
     if not path.exists():
         raise FileNotFoundError(f"Missing FEM local stress reference: {path}")
 
     frame = pd.read_excel(path, header=None)
     frame = frame.dropna(how="any")
-    return frame.iloc[:, 0].to_numpy(dtype=float), frame.iloc[:, 1].to_numpy(dtype=float)
+    return (
+        frame.iloc[:, 0].to_numpy(dtype=float),
+        frame.iloc[:, 1].to_numpy(dtype=float),
+        path,
+    )
+
+
+def load_fem_ring5_history(velocity):
+    path = fem_local_stress_history_path(velocity)
+    if not path.exists():
+        raise FileNotFoundError(f"Missing FEM local-stress 5hL history: {path}")
+
+    frame = pd.read_excel(path, header=None)
+    distance_mm = math.nan
+    if frame.shape[0] > 0 and frame.shape[1] > 1:
+        maybe_distance = frame.iloc[0, 1]
+        if pd.notna(maybe_distance):
+            distance_mm = float(maybe_distance)
+
+    data = frame.dropna(how="any")
+    if data.empty or data.shape[1] < 2:
+        raise ValueError(f"FEM local-stress 5hL history has no data rows: {path}")
+
+    return (
+        distance_mm,
+        data.iloc[:, 0].to_numpy(dtype=float),
+        data.iloc[:, 1].to_numpy(dtype=float),
+        path,
+    )
+
+
+def load_fem_ring5_stress(velocity, step, hL):
+    distance_mm, steps, stress, path = load_fem_ring5_history(velocity)
+    matches = np.where(np.isclose(steps, float(step), rtol=0.0, atol=1e-9))[0]
+    if len(matches) == 0:
+        raise ValueError(
+            f"FEM local-stress 5hL history has no row for step {step}: {path}"
+        )
+
+    if not np.isfinite(distance_mm):
+        distance_mm = 5 * hL * 1000.0
+    return distance_mm, float(stress[matches[0]]), path
+
+
+def load_fem_local_stress_reference(velocity, step, hL):
+    profile_distance_mm = None
+    profile_stress = None
+    profile_source = None
+
+    # The *_last.xlsx files are full spatial profiles for the final dynamic
+    # step.  Intermediate-step FEM local-stress data are only available at 5hL.
+    if int(step) == FEM_LOCAL_STRESS_PROFILE_STEP:
+        profile_distance_mm, profile_stress, profile_path = load_fem_local_stress_profile(
+            velocity
+        )
+        profile_source = str(profile_path)
+
+    try:
+        ring5_distance_mm, ring5_stress, ring5_path = load_fem_ring5_stress(
+            velocity,
+            step,
+            hL,
+        )
+    except FileNotFoundError:
+        if profile_distance_mm is None or profile_stress is None:
+            raise
+        ring5_distance_mm = 5 * hL * 1000.0
+        ring5_stress = interpolate_fem_stress(
+            ring5_distance_mm,
+            profile_distance_mm,
+            profile_stress,
+        )
+        ring5_path = Path(profile_source)
+
+    return FEMLocalStressReference(
+        profile_distance_mm=profile_distance_mm,
+        profile_stress=profile_stress,
+        profile_source=profile_source,
+        ring5_distance_mm=ring5_distance_mm,
+        ring5_stress=ring5_stress,
+        ring5_source=str(ring5_path),
+    )
 
 
 def interpolate_fem_stress(distance_mm, fem_distance_mm, fem_stress):
@@ -142,7 +255,7 @@ def safe_ratio(numerator, denominator):
 
 def write_local_stress_outputs(case_folder, config, step, output_dir):
     distance_hL, theta_deg, stress = local_stress_from_reaction(case_folder, config, step)
-    fem_distance_mm, fem_stress = load_fem_local_stress(config.velocity)
+    fem_reference = load_fem_local_stress_reference(config.velocity, step, config.hL)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -173,7 +286,14 @@ def write_local_stress_outputs(case_folder, config, step, output_dir):
         for i in range(max_distance):
             dist_idx = int(distance_hL[i])
             distance_mm = dist_idx * config.hL * 1000.0
-            fem_value = interpolate_fem_stress(distance_mm, fem_distance_mm, fem_stress)
+            if fem_reference.has_profile:
+                fem_value = interpolate_fem_stress(
+                    distance_mm,
+                    fem_reference.profile_distance_mm,
+                    fem_reference.profile_stress,
+                )
+            else:
+                fem_value = math.nan
             ring = stress[i]
             stress_ave = float(np.nanmean(ring))
             stress_max = float(np.nanmax(ring))
@@ -195,14 +315,22 @@ def write_local_stress_outputs(case_folder, config, step, output_dir):
         writer = csv.writer(f)
         writer.writerow(["theta_deg", "stress_cal", "stress_FEM_5hL", "normalized"])
         if len(distance_hL) >= 5:
-            fem_value = interpolate_fem_stress(5 * config.hL * 1000.0, fem_distance_mm, fem_stress)
             for theta, stress_value in zip(theta_deg, stress[4]):
-                writer.writerow([theta, stress_value, fem_value, safe_ratio(stress_value, fem_value)])
+                writer.writerow([
+                    theta,
+                    stress_value,
+                    fem_reference.ring5_stress,
+                    safe_ratio(stress_value, fem_reference.ring5_stress),
+                ])
 
     return {
         "local_stress_cal": str(cal_path),
         "local_stress_profile": str(profile_path),
         "local_stress_ring_5hL": str(ring5_path),
+        "fem_local_stress_profile_source": fem_reference.profile_source,
+        "fem_local_stress_profile_available": fem_reference.has_profile,
+        "fem_local_stress_ring5_source": fem_reference.ring5_source,
+        "fem_local_stress_ring5_distance_mm": fem_reference.ring5_distance_mm,
     }
 
 
@@ -267,18 +395,18 @@ def write_dsif_normalized(paths, output_dir):
 def postprocess_case(case_folder, step=None, output_dir=None, skip_dsif=False):
     case_folder = Path(case_folder).resolve()
     config = load_case_config(case_folder)
-    final_step = config.final_step if step is None else int(step)
+    target_step = config.final_step if step is None else int(step)
     output_dir = case_folder / "postprocess" if output_dir is None else Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     outputs = {
         "case_folder": str(case_folder),
-        "step": final_step,
+        "step": target_step,
     }
-    outputs.update(write_local_stress_outputs(case_folder, config, final_step, output_dir))
+    outputs.update(write_local_stress_outputs(case_folder, config, target_step, output_dir))
 
     if not skip_dsif:
-        j_outputs = run_j_integral_outputs(case_folder, config, final_step, output_dir)
+        j_outputs = run_j_integral_outputs(case_folder, config, target_step, output_dir)
         outputs.update(j_outputs)
         outputs.update(write_dsif_normalized(j_outputs, output_dir))
 
@@ -288,6 +416,32 @@ def postprocess_case(case_folder, step=None, output_dir=None, skip_dsif=False):
     return outputs
 
 
+def postprocess_steps(case_folder, steps, output_dir=None, skip_dsif=False):
+    case_folder = Path(case_folder).resolve()
+    root_output_dir = case_folder / "postprocess" if output_dir is None else Path(output_dir)
+    steps = [int(step) for step in steps]
+    outputs_by_step = {}
+    for step in steps:
+        step_output_dir = root_output_dir / f"step{step:05d}"
+        outputs_by_step[str(step)] = postprocess_case(
+            case_folder,
+            step=step,
+            output_dir=step_output_dir,
+            skip_dsif=skip_dsif,
+        )
+
+    summary_path = root_output_dir / "postprocess_steps_summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "case_folder": str(case_folder),
+        "steps": steps,
+        "outputs": outputs_by_step,
+    }
+    summary_path.write_text(json.dumps(summary, indent=2))
+    summary["summary"] = str(summary_path)
+    return summary
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Post-process one dynamic parameter-sweep case.",
@@ -295,6 +449,16 @@ def parse_args():
     )
     parser.add_argument("case_folder", type=Path)
     parser.add_argument("--step", type=int, default=None, help="Step to post-process; defaults to run_config final step")
+    parser.add_argument(
+        "--steps",
+        type=int,
+        nargs="+",
+        default=None,
+        help=(
+            "Post-process multiple steps. Outputs are written under "
+            "OUTPUT_DIR/stepNNNNN; cannot be combined with --step."
+        ),
+    )
     parser.add_argument("--output-dir", type=Path, default=None, help="Output directory; defaults to case_folder/postprocess")
     parser.add_argument("--skip-dsif", action="store_true", help="Only calculate local-stress outputs")
     return parser.parse_args()
@@ -302,12 +466,23 @@ def parse_args():
 
 def main():
     args = parse_args()
-    outputs = postprocess_case(
-        args.case_folder,
-        step=args.step,
-        output_dir=args.output_dir,
-        skip_dsif=args.skip_dsif,
-    )
+    if args.step is not None and args.steps is not None:
+        raise ValueError("--step cannot be combined with --steps")
+
+    if args.steps is not None:
+        outputs = postprocess_steps(
+            args.case_folder,
+            steps=args.steps,
+            output_dir=args.output_dir,
+            skip_dsif=args.skip_dsif,
+        )
+    else:
+        outputs = postprocess_case(
+            args.case_folder,
+            step=args.step,
+            output_dir=args.output_dir,
+            skip_dsif=args.skip_dsif,
+        )
     print(json.dumps(outputs, indent=2))
 
 
