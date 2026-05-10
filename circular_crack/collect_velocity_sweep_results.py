@@ -37,6 +37,7 @@ DEFAULT_VELOCITY_STEP = 100
 SUMMARY_FILE = "crack_velocity_sweep_summary.csv"
 PROFILE_FILE = "local_stress_normalized_profile.csv"
 DSIF_FILE = "dsif_normalized.csv"
+TARGET_LOCAL_STRESS_DISTANCE_HL = 5.0
 
 
 @dataclass
@@ -270,31 +271,56 @@ def format_number(value):
     return f"{value:.17g}"
 
 
-def write_columns_csv(output_path, headers, columns):
+def write_single_column_csv(output_path, values):
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    max_len = max((len(column) for column in columns), default=0)
-
     with output_path.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(headers)
-        for row_index in range(max_len):
-            writer.writerow([
-                column[row_index] if row_index < len(column) else ""
-                for column in columns
-            ])
+        for value in values:
+            writer.writerow([value])
 
 
-def local_stress_norm_ave_column(result):
-    return [csv_value(row, "norm_ave") for row in result.profile_rows]
+def write_vertical_max_min_csv(output_path, pairs):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        for index, (max_value, min_value) in enumerate(pairs):
+            if index > 0:
+                writer.writerow([])
+            writer.writerow([max_value])
+            writer.writerow([min_value])
 
 
-def local_stress_norm_max_min_column(result):
-    values = []
+def local_stress_target_profile_row(result):
     for row in result.profile_rows:
-        values.append(csv_value(row, "norm_max"))
-        values.append(csv_value(row, "norm_min"))
-        values.append("")
-    return values
+        distance = finite_float(row.get("distance_hL"))
+        if distance is None:
+            continue
+        if math.isclose(
+            distance,
+            TARGET_LOCAL_STRESS_DISTANCE_HL,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            return row
+
+    target_index = int(TARGET_LOCAL_STRESS_DISTANCE_HL) - 1
+    if target_index >= 0 and target_index < len(result.profile_rows):
+        return result.profile_rows[target_index]
+    return None
+
+
+def local_stress_5hL_norm_ave(result):
+    row = local_stress_target_profile_row(result)
+    if row is None:
+        return ""
+    return csv_value(row, "norm_ave")
+
+
+def local_stress_5hL_norm_max_min(result):
+    row = local_stress_target_profile_row(result)
+    if row is None:
+        return "", ""
+    return csv_value(row, "norm_max"), csv_value(row, "norm_min")
 
 
 def dsif_normalized_values(result):
@@ -313,20 +339,16 @@ def dsif_stats(result):
 
 
 def write_local_stress_outputs(output_dir, results):
-    headers = [result.label for result in results]
-
     norm_ave_path = output_dir / "local_stress_norm_ave.csv"
-    write_columns_csv(
+    write_single_column_csv(
         norm_ave_path,
-        headers,
-        [local_stress_norm_ave_column(result) for result in results],
+        [local_stress_5hL_norm_ave(result) for result in results],
     )
 
     max_min_path = output_dir / "local_stress_norm_max_min.csv"
-    write_columns_csv(
+    write_vertical_max_min_csv(
         max_min_path,
-        headers,
-        [local_stress_norm_max_min_column(result) for result in results],
+        [local_stress_5hL_norm_max_min(result) for result in results],
     )
 
     return [norm_ave_path, max_min_path]
@@ -339,22 +361,21 @@ def write_dsif_outputs(output_dir, results):
 
     stats_by_result = {result.label: dsif_stats(result) for result in results}
 
-    with ave_path.open("w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["velocity", "norm_ave"])
-        for result in results:
-            ave, _max_value, _min_value = stats_by_result[result.label]
-            writer.writerow([result.label, format_number(ave)])
-
-    write_columns_csv(
-        max_min_path,
-        [result.label for result in results],
+    write_single_column_csv(
+        ave_path,
         [
-            [
+            format_number(stats_by_result[result.label][0])
+            for result in results
+        ],
+    )
+
+    write_vertical_max_min_csv(
+        max_min_path,
+        [
+            (
                 format_number(stats_by_result[result.label][1]),
                 format_number(stats_by_result[result.label][2]),
-                "",
-            ]
+            )
             for result in results
         ],
     )
@@ -378,6 +399,10 @@ def collect_warnings(results, summary_path=None):
             continue
         if not result.profile_rows:
             warnings.append(f"{result.label}: missing or empty {result.postprocess_dir / PROFILE_FILE}")
+        elif local_stress_target_profile_row(result) is None:
+            warnings.append(
+                f"{result.label}: no local-stress row for distance_hL={TARGET_LOCAL_STRESS_DISTANCE_HL:g}"
+            )
         if not result.dsif_rows:
             warnings.append(f"{result.label}: missing or empty {result.postprocess_dir / DSIF_FILE}")
     return warnings
