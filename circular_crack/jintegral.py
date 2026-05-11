@@ -124,6 +124,17 @@ class JIntegralCalculator:
         # Shape functions at Gauss points
         self.nn = [self.shp(p) for p in self.psi_eta_zeta]
         self.Dnn = [self.Dshp(p) for p in self.psi_eta_zeta]
+
+    def mode_i_dynamic_coefficient(self):
+        """Coefficient A_I in the dynamic Mode-I J-to-K relation."""
+        if abs(self.v) < 1e-12:
+            return 1.0 - self.nu
+
+        v1 = np.sqrt(((1 - self.nu) * self.EE) / ((1 + self.nu) * (1 - 2 * self.nu) * self.rho))
+        v2 = np.sqrt(self.EE / ((1 + self.nu) * 2 * self.rho))
+        beta1 = np.sqrt(1 - (self.v / v1)**2)
+        beta2 = np.sqrt(1 - (self.v / v2)**2)
+        return (beta1 * (1 - beta2**2)) / (4 * beta1 * beta2 - (1 + beta2**2)**2)
     
     def shp(self, coords):
         """Shape functions for C3D8 element"""
@@ -464,11 +475,7 @@ class JIntegralCalculator:
         self.JAll[0].append([step] + J_full)
         
         # Calculate K_I
-        v1 = np.sqrt(((1 - self.nu) * self.EE) / ((1 + self.nu) * (1 - 2 * self.nu) * self.rho))
-        v2 = np.sqrt(self.EE / ((1 + self.nu) * 2 * self.rho))
-        beta1 = np.sqrt(1 - (self.v / v1)**2)
-        beta2 = np.sqrt(1 - (self.v / v2)**2)
-        AI = (beta1 * (1 - beta2**2)) / (4 * beta1 * beta2 - (1 + beta2**2)**2)
+        AI = self.mode_i_dynamic_coefficient()
         
         K_I_values = [np.sqrt((self.EE * J) / ((1 + self.nu) * AI)) if J > 0 else 0.0 for J in J_full]
         
@@ -703,8 +710,9 @@ class JIntegralCalculator:
                 Jintd += (kinetic_term + inertial_term) * detJ[ie, ig] * self.weight[ig]
         
         # Normalize
-        Jints = (2.0 * Jints) / meas
-        Jintd = 2.0 * Jintd
+        normalization = 2.0 / meas
+        Jints *= normalization
+        Jintd *= normalization
         Jint = Jints + Jintd
         
 
