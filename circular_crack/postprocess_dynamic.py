@@ -28,6 +28,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from const import const_jintegral as cji
 from const import const_local_mesh as clm
 from const import material_property as mp
 from const import simulation_params as sp
@@ -66,6 +67,66 @@ class FEMLocalStressReference:
     @property
     def has_profile(self):
         return self.profile_distance_mm is not None and self.profile_stress is not None
+
+
+@dataclass(frozen=True)
+class JIntegralParams:
+    Rj0: float
+    Rj1: float
+    Wj0: float
+    Wj1: float
+    ngp: int
+
+    def calculator_kwargs(self):
+        return {
+            "Rj0": self.Rj0,
+            "Rj1": self.Rj1,
+            "Wj0": self.Wj0,
+            "Wj1": self.Wj1,
+            "ngp": self.ngp,
+        }
+
+
+def default_j_integral_params():
+    return {
+        "Rj0": float(cji.Rj0),
+        "Rj1": float(cji.Rj1),
+        "Wj0": float(cji.Wj0),
+        "Wj1": float(cji.Wj1),
+        "ngp": int(cji.ngp),
+    }
+
+
+def resolve_j_integral_params(overrides=None):
+    if isinstance(overrides, JIntegralParams):
+        params = overrides
+    else:
+        data = default_j_integral_params()
+        if overrides:
+            for key in data:
+                value = overrides.get(key)
+                if value is not None:
+                    data[key] = value
+        params = JIntegralParams(
+            Rj0=float(data["Rj0"]),
+            Rj1=float(data["Rj1"]),
+            Wj0=float(data["Wj0"]),
+            Wj1=float(data["Wj1"]),
+            ngp=int(data["ngp"]),
+        )
+
+    if params.Rj0 <= 0.0 or params.Rj1 < params.Rj0:
+        raise ValueError(
+            f"Require 0 < Rj0 <= Rj1, got Rj0={params.Rj0}, Rj1={params.Rj1}"
+        )
+    if params.Wj0 <= 0.0 or params.Wj1 < params.Wj0:
+        raise ValueError(
+            f"Require 0 < Wj0 <= Wj1, got Wj0={params.Wj0}, Wj1={params.Wj1}"
+        )
+    if params.ngp < 1:
+        raise ValueError(f"Require ngp >= 1, got {params.ngp}")
+
+    return params
 
 
 def load_case_config(case_folder):
@@ -334,7 +395,8 @@ def write_local_stress_outputs(case_folder, config, step, output_dir):
     }
 
 
-def run_j_integral_outputs(case_folder, config, step, output_dir):
+def run_j_integral_outputs(case_folder, config, step, output_dir, j_params=None):
+    j_params = resolve_j_integral_params(j_params)
     common = {
         "step_start": step,
         "step_end": step,
@@ -349,6 +411,7 @@ def run_j_integral_outputs(case_folder, config, step, output_dir):
         "EE": mp.EE,
         "rho": mp.Rho,
     }
+    common.update(j_params.calculator_kwargs())
 
     hsiga_j = output_dir / "hsiga_J.csv"
     hsiga_calc = JIntegralCalculator(result_root=case_folder, **common)
@@ -363,6 +426,7 @@ def run_j_integral_outputs(case_folder, config, step, output_dir):
         "hsiga_kid": str(output_dir / "hsiga_J_KId.csv"),
         "fem_j": str(fem_j),
         "fem_kid": str(output_dir / "fem_reference_J_KId.csv"),
+        "j_integral": j_params.calculator_kwargs(),
     }
 
 
@@ -392,7 +456,13 @@ def write_dsif_normalized(paths, output_dir):
     return {"dsif_normalized": str(out_path)}
 
 
-def postprocess_case(case_folder, step=None, output_dir=None, skip_dsif=False):
+def postprocess_case(
+    case_folder,
+    step=None,
+    output_dir=None,
+    skip_dsif=False,
+    j_params=None,
+):
     case_folder = Path(case_folder).resolve()
     config = load_case_config(case_folder)
     target_step = config.final_step if step is None else int(step)
@@ -406,7 +476,13 @@ def postprocess_case(case_folder, step=None, output_dir=None, skip_dsif=False):
     outputs.update(write_local_stress_outputs(case_folder, config, target_step, output_dir))
 
     if not skip_dsif:
-        j_outputs = run_j_integral_outputs(case_folder, config, target_step, output_dir)
+        j_outputs = run_j_integral_outputs(
+            case_folder,
+            config,
+            target_step,
+            output_dir,
+            j_params=j_params,
+        )
         outputs.update(j_outputs)
         outputs.update(write_dsif_normalized(j_outputs, output_dir))
 
@@ -416,7 +492,13 @@ def postprocess_case(case_folder, step=None, output_dir=None, skip_dsif=False):
     return outputs
 
 
-def postprocess_steps(case_folder, steps, output_dir=None, skip_dsif=False):
+def postprocess_steps(
+    case_folder,
+    steps,
+    output_dir=None,
+    skip_dsif=False,
+    j_params=None,
+):
     case_folder = Path(case_folder).resolve()
     root_output_dir = case_folder / "postprocess" if output_dir is None else Path(output_dir)
     steps = [int(step) for step in steps]
@@ -428,6 +510,7 @@ def postprocess_steps(case_folder, steps, output_dir=None, skip_dsif=False):
             step=step,
             output_dir=step_output_dir,
             skip_dsif=skip_dsif,
+            j_params=j_params,
         )
 
     summary_path = root_output_dir / "postprocess_steps_summary.json"
@@ -448,7 +531,12 @@ def parse_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("case_folder", type=Path)
-    parser.add_argument("--step", type=int, default=None, help="Step to post-process; defaults to run_config final step")
+    parser.add_argument(
+        "--step",
+        type=int,
+        default=None,
+        help="Step to post-process; defaults to run_config final step",
+    )
     parser.add_argument(
         "--steps",
         type=int,
@@ -459,8 +547,47 @@ def parse_args():
             "OUTPUT_DIR/stepNNNNN; cannot be combined with --step."
         ),
     )
-    parser.add_argument("--output-dir", type=Path, default=None, help="Output directory; defaults to case_folder/postprocess")
-    parser.add_argument("--skip-dsif", action="store_true", help="Only calculate local-stress outputs")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Output directory; defaults to case_folder/postprocess",
+    )
+    parser.add_argument(
+        "--skip-dsif",
+        action="store_true",
+        help="Only calculate local-stress outputs",
+    )
+    parser.add_argument(
+        "--rj0",
+        type=float,
+        default=None,
+        help="Override const_jintegral.Rj0",
+    )
+    parser.add_argument(
+        "--rj1",
+        type=float,
+        default=None,
+        help="Override const_jintegral.Rj1",
+    )
+    parser.add_argument(
+        "--wj0",
+        type=float,
+        default=None,
+        help="Override const_jintegral.Wj0",
+    )
+    parser.add_argument(
+        "--wj1",
+        type=float,
+        default=None,
+        help="Override const_jintegral.Wj1",
+    )
+    parser.add_argument(
+        "--ngp",
+        type=int,
+        default=None,
+        help="Override const_jintegral.ngp",
+    )
     return parser.parse_args()
 
 
@@ -469,12 +596,21 @@ def main():
     if args.step is not None and args.steps is not None:
         raise ValueError("--step cannot be combined with --steps")
 
+    j_params = {
+        "Rj0": args.rj0,
+        "Rj1": args.rj1,
+        "Wj0": args.wj0,
+        "Wj1": args.wj1,
+        "ngp": args.ngp,
+    }
+
     if args.steps is not None:
         outputs = postprocess_steps(
             args.case_folder,
             steps=args.steps,
             output_dir=args.output_dir,
             skip_dsif=args.skip_dsif,
+            j_params=j_params,
         )
     else:
         outputs = postprocess_case(
@@ -482,6 +618,7 @@ def main():
             step=args.step,
             output_dir=args.output_dir,
             skip_dsif=args.skip_dsif,
+            j_params=j_params,
         )
     print(json.dumps(outputs, indent=2))
 

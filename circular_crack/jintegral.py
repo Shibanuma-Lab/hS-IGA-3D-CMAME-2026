@@ -42,6 +42,7 @@ class JIntegralCalculator:
         d_theta=None,
         hL=None,
         HL=None,
+        ngp=None,
     ):
         """
         Initialize J-integral calculator with configurable parameters.
@@ -49,7 +50,7 @@ class JIntegralCalculator:
         Args:
             step_start: Starting step number
             step_end: Ending step number
-            Rj0: Inner radius for J-integral domain (relative to crack length)
+            Rj0: Inner radius for J-integral domain (normalized by hL)
             Rj1: Outer radius for J-integral domain
             Wj0: Inner width parameter
             Wj1: Outer width parameter
@@ -76,7 +77,7 @@ class JIntegralCalculator:
         self.Wj1 = Wj1
         
         self.v = v
-        self.ngp = 2
+        self.ngp = 2 if ngp is None else int(ngp)
         
         # Step range
         self.stepini = step_start

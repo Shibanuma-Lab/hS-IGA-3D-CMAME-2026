@@ -123,6 +123,49 @@ def format_float_for_path(value, decimals=6):
     return text if text else "0"
 
 
+def add_j_integral_args(parser):
+    parser.add_argument(
+        "--rj0",
+        type=float,
+        default=None,
+        help="Override const_jintegral.Rj0 for DSIF post-processing",
+    )
+    parser.add_argument(
+        "--rj1",
+        type=float,
+        default=None,
+        help="Override const_jintegral.Rj1 for DSIF post-processing",
+    )
+    parser.add_argument(
+        "--wj0",
+        type=float,
+        default=None,
+        help="Override const_jintegral.Wj0 for DSIF post-processing",
+    )
+    parser.add_argument(
+        "--wj1",
+        type=float,
+        default=None,
+        help="Override const_jintegral.Wj1 for DSIF post-processing",
+    )
+    parser.add_argument(
+        "--ngp",
+        type=int,
+        default=None,
+        help="Override const_jintegral.ngp for DSIF post-processing",
+    )
+
+
+def j_integral_overrides_from_args(args):
+    return {
+        "Rj0": args.rj0,
+        "Rj1": args.rj1,
+        "Wj0": args.wj0,
+        "Wj1": args.wj1,
+        "ngp": args.ngp,
+    }
+
+
 def load_current_dynamic_constants():
     """
     Read hL and global-mesh constants from the current dynamic const files.
@@ -357,6 +400,7 @@ class DynamicParamSweep:
         postprocess_skip_dsif=False,
         postprocess_only=False,
         postprocess_steps=None,
+        postprocess_j_params=None,
         only_baseline=False,
         selected_groups=None,
     ):
@@ -374,6 +418,7 @@ class DynamicParamSweep:
         self.postprocess_skip_dsif = postprocess_skip_dsif
         self.postprocess_only = postprocess_only
         self.postprocess_steps = self.normalize_postprocess_steps(postprocess_steps)
+        self.postprocess_j_params = postprocess_j_params
         self.only_baseline = only_baseline
         if selected_groups is None:
             self.selected_groups = set(SWEEP_GROUPS)
@@ -438,6 +483,7 @@ class DynamicParamSweep:
                 step=step,
                 output_dir=self.postprocess_output_dir(folder, step),
                 skip_dsif=self.postprocess_skip_dsif,
+                j_params=self.postprocess_j_params,
             )
         return outputs_by_step
 
@@ -1017,6 +1063,7 @@ def parse_args():
             "postprocess/stepNNNNN inside each case folder."
         ),
     )
+    add_j_integral_args(parser)
     parser.add_argument(
         "--only-baseline",
         action="store_true",
@@ -1065,6 +1112,7 @@ def main():
         postprocess_skip_dsif=args.postprocess_skip_dsif,
         postprocess_only=args.postprocess_only,
         postprocess_steps=args.postprocess_steps,
+        postprocess_j_params=j_integral_overrides_from_args(args),
         only_baseline=args.only_baseline,
         selected_groups=selected_groups,
     )

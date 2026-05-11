@@ -39,6 +39,8 @@ from param_sweep_dynamic import (  # noqa: E402
     calculate_actual_hG,
     calculate_uniform_theta,
     format_velocity,
+    add_j_integral_args,
+    j_integral_overrides_from_args,
 )
 
 
@@ -356,6 +358,7 @@ def parse_args():
             "is normally not recommended."
         ),
     )
+    add_j_integral_args(parser)
     parser.set_defaults(postprocess=True)
     return parser.parse_args()
 
@@ -400,6 +403,7 @@ def main():
         postprocess=args.postprocess,
         postprocess_skip_dsif=args.postprocess_skip_dsif,
         postprocess_only=args.postprocess_only,
+        postprocess_j_params=j_integral_overrides_from_args(args),
         allow_missing_fem_data=args.allow_missing_fem_data,
     )
     sweep.run()
