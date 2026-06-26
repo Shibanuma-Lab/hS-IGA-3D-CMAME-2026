@@ -37,6 +37,7 @@ DEFAULT_OUTPUT_ROOT = (
 )
 DEFAULT_ALPHAS = (0.01, 0.02, 0.05)
 DEFAULT_VELOCITY = 500.0
+DEFAULT_TIMING_CUMULATIVE_STEPS = (20, 40, 60, 80, 100)
 
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
@@ -73,6 +74,7 @@ SUMMARY_FIELDS = [
     "run_log",
     "timing_summary",
     "timing_by_step",
+    "timing_cumulative",
     "timing_steps_found",
     "timing_steps_missing",
     "timing_log_total_time_sec",
@@ -185,6 +187,27 @@ TIMING_SUMMARY_FIELDS = [
     "other_time_sec",
     "static_total_time_sec",
     "dynamic_total_time_sec",
+    "timing_by_step",
+    "timing_cumulative",
+]
+
+CUMULATIVE_TIMING_FIELDS = [
+    "alpha",
+    "alpha_label",
+    "source_case",
+    "output_case",
+    "step_start",
+    "target_step",
+    "steps_expected",
+    "steps_found",
+    "steps_missing",
+    "log_total_time_sec",
+    "requested_phase_time_sec",
+    "input_time_sec",
+    "matrix_generation_time_sec",
+    "solver_time_sec",
+    "output_time_sec",
+    "other_time_sec",
     "timing_by_step",
 ]
 
@@ -426,6 +449,7 @@ def timing_summary_row(
     args,
     output_case,
     step_csv,
+    cumulative_csv,
     run_seconds,
     post_seconds,
 ):
@@ -476,6 +500,7 @@ def timing_summary_row(
         "static_total_time_sec": format_seconds(static_total),
         "dynamic_total_time_sec": format_seconds(dynamic_total),
         "timing_by_step": relative_path(step_csv),
+        "timing_cumulative": relative_path(cumulative_csv),
     }
 
 
@@ -487,25 +512,87 @@ def write_timing_summary(row, path):
         writer.writerow(row)
 
 
+def cumulative_timing_rows(rows, target_steps, alpha, args, output_case, step_csv):
+    cumulative_rows = []
+    for target_step in target_steps:
+        selected = [
+            row
+            for row in rows
+            if int(args.step_start) <= int(row["step"]) <= int(target_step)
+        ]
+        steps_expected = int(target_step) - int(args.step_start) + 1
+        steps_found = sum(
+            1 for row in selected if row.get("status") not in {"missing_log", "empty_log"}
+        )
+        steps_missing = sum(
+            1 for row in selected if row.get("status") in {"missing_log", "empty_log"}
+        )
+        requested = sum_numeric(selected, "requested_phase_time_sec")
+
+        cumulative_rows.append(
+            {
+                "alpha": f"{float(alpha):.12g}",
+                "alpha_label": format_alpha_for_path(alpha),
+                "source_case": str(args.source_case.resolve()),
+                "output_case": str(Path(output_case).resolve()),
+                "step_start": args.step_start,
+                "target_step": int(target_step),
+                "steps_expected": steps_expected,
+                "steps_found": steps_found,
+                "steps_missing": steps_missing,
+                "log_total_time_sec": format_seconds(sum_numeric(selected, "total_time_sec")),
+                "requested_phase_time_sec": format_seconds(requested),
+                "input_time_sec": format_seconds(sum_numeric(selected, "input_time_sec")),
+                "matrix_generation_time_sec": format_seconds(
+                    sum_numeric(selected, "matrix_generation_time_sec")
+                ),
+                "solver_time_sec": format_seconds(sum_numeric(selected, "solver_time_sec")),
+                "output_time_sec": format_seconds(sum_numeric(selected, "output_time_sec")),
+                "other_time_sec": format_seconds(sum_numeric(selected, "other_time_sec")),
+                "timing_by_step": relative_path(step_csv),
+            }
+        )
+    return cumulative_rows
+
+
+def write_cumulative_timings(rows, path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CUMULATIVE_TIMING_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def collect_and_write_timings(output_case, alpha, args, run_seconds, post_seconds):
     output_case = Path(output_case)
     timing_dir = output_case / "timing"
     step_csv = timing_dir / "timing_by_step.csv"
     summary_csv = timing_dir / "timing_summary.csv"
+    cumulative_csv = timing_dir / "timing_cumulative.csv"
 
     rows = collect_step_timings(output_case, args.step_start, args.step_end)
     write_step_timings(rows, step_csv)
+    cumulative_rows = cumulative_timing_rows(
+        rows,
+        args.timing_cumulative_steps,
+        alpha,
+        args,
+        output_case,
+        step_csv,
+    )
+    write_cumulative_timings(cumulative_rows, cumulative_csv)
     summary = timing_summary_row(
         rows,
         alpha,
         args,
         output_case,
         step_csv,
+        cumulative_csv,
         run_seconds,
         post_seconds,
     )
     write_timing_summary(summary, summary_csv)
-    return summary_csv, step_csv, summary
+    return summary_csv, step_csv, cumulative_csv, summary
 
 
 def result_exists(case_folder, final_step):
@@ -805,7 +892,7 @@ def add_timing_to_summary_row(row, output_case, alpha, args, run_seconds, post_s
         return row
 
     try:
-        summary_csv, step_csv, timing = collect_and_write_timings(
+        summary_csv, step_csv, cumulative_csv, timing = collect_and_write_timings(
             output_case,
             alpha,
             args,
@@ -820,6 +907,7 @@ def add_timing_to_summary_row(row, output_case, alpha, args, run_seconds, post_s
         {
             "timing_summary": relative_path(summary_csv),
             "timing_by_step": relative_path(step_csv),
+            "timing_cumulative": relative_path(cumulative_csv),
             "timing_steps_found": timing["steps_found"],
             "timing_steps_missing": timing["steps_missing"],
             "timing_log_total_time_sec": timing["log_total_time_sec"],
@@ -851,6 +939,7 @@ def summary_row(idx, alpha, args, output_case, status, run_seconds, post_seconds
         "run_log": str(run_log) if run_log else "",
         "timing_summary": "",
         "timing_by_step": "",
+        "timing_cumulative": "",
         "timing_steps_found": "",
         "timing_steps_missing": "",
         "timing_log_total_time_sec": "",
@@ -966,6 +1055,16 @@ def parse_args():
         dest="collect_timing",
         help="Do not parse per-step analysis.log files after each run.",
     )
+    parser.add_argument(
+        "--timing-cumulative-steps",
+        type=int,
+        nargs="+",
+        default=list(DEFAULT_TIMING_CUMULATIVE_STEPS),
+        help=(
+            "Inclusive target steps for timing/timing_cumulative.csv. "
+            "Each row sums step_start..target_step."
+        ),
+    )
     add_j_integral_args(parser)
     parser.set_defaults(postprocess=True, collect_timing=True)
     args = parser.parse_args()
@@ -998,6 +1097,22 @@ def resolve_args(args):
         args.step_end = int(source_config.get("step_end", 101))
     if args.step_start >= args.step_end:
         raise ValueError("--step-start must be smaller than --step-end")
+
+    cumulative_steps = []
+    seen_steps = set()
+    for step in args.timing_cumulative_steps:
+        step = int(step)
+        if step < args.step_start or step >= args.step_end:
+            raise ValueError(
+                "--timing-cumulative-steps values must be inside "
+                f"{args.step_start}..{args.step_end - 1}; got {step}"
+            )
+        if step not in seen_steps:
+            cumulative_steps.append(step)
+            seen_steps.add(step)
+    if not cumulative_steps:
+        raise ValueError("--timing-cumulative-steps must include at least one step")
+    args.timing_cumulative_steps = cumulative_steps
 
     normalized = []
     seen = set()
@@ -1040,6 +1155,10 @@ def main():
     print(f"Postprocess: {args.postprocess}")
     print(f"Skip DSIF: {args.skip_dsif}")
     print(f"Collect timing: {args.collect_timing}")
+    print(
+        "Timing cumulative steps: "
+        f"{', '.join(str(step) for step in args.timing_cumulative_steps)}"
+    )
     print(f"Dry run: {args.dry_run}")
     print(f"Summary CSV: {summary_path}")
 
