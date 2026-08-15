@@ -218,6 +218,10 @@ PY
     info "Python environment is ready."
 }
 
+is_solver_checkout() {
+    [[ -e "$SOLVER_DIR/.git" ]] && git -C "$SOLVER_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
 initialise_solver_checkout() {
     local expected_commit
     local source_url
@@ -231,11 +235,17 @@ initialise_solver_checkout() {
         source_url="$SFEM_LINEAR_REPO"
     fi
 
-    if [[ -e "$SOLVER_DIR" ]] && ! git -C "$SOLVER_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        die "$SOLVER_DIR exists but is not a Git checkout. Move it aside manually, then rerun setup."
+    if [[ -e "$SOLVER_DIR" ]] && ! is_solver_checkout; then
+        # A normal clone can leave an empty directory for an uninitialised submodule.
+        # Remove only that empty placeholder; preserve any non-empty user directory.
+        if [[ -d "$SOLVER_DIR" ]] && rmdir "$SOLVER_DIR"; then
+            info "Removed empty sfem_linear submodule placeholder."
+        else
+            die "$SOLVER_DIR exists but is not a Git checkout. Move it aside manually, then rerun setup."
+        fi
     fi
 
-    if git -C "$SOLVER_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if is_solver_checkout; then
         if [[ -n "$(git -C "$SOLVER_DIR" status --porcelain)" ]]; then
             die "$SOLVER_DIR has local changes. Commit, stash, or use a clean checkout before setup."
         fi
@@ -386,7 +396,7 @@ check_installation() {
         failures=1
     fi
 
-    if ! git -C "$SOLVER_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if ! is_solver_checkout; then
         warn "sfem_linear is not initialised."
         failures=1
     else
