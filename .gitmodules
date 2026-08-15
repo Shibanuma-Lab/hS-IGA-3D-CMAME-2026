@@ -1,0 +1,3 @@
+[submodule "sfem_linear"]
+	path = sfem_linear
+	url = git@gitlab.com:morita/sfem_linear.git

@@ -1,754 +1,453 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 # ============================================================================
-# S-IGA Circular Crack 3D Solver - Installation Script
-# ============================================================================
-# This script automates the installation process for new computers
+# hS-IGA 3D circular-crack implementation: local installation helper
 #
-# Prerequisites:
-#   - Git repository already cloned
-#   - Run from project root directory
-#
-# Usage:
-#   chmod +x setup.sh
-#   ./setup.sh
-#
-# Optional environment variables:
-#   SETUP_APT_UPGRADE=1       Run apt-get upgrade before installing packages
-#   FORCE_REBUILD_SOLVER=1    Rebuild monolis and sfem_linear even if binary exists
-#   SFEM_LINEAR_REPO=<url>    Override the sfem_linear clone URL
-#   SFEM_LINEAR_BRANCH=<name> Override the sfem_linear branch (default: tianyu_IGA)
-#   SKIP_SOLVER_UPDATE=1      Do not fetch/fast-forward an existing sfem_linear clone
+# This script intentionally keeps all project dependencies inside the checkout.
+# It does not change system-wide compiler alternatives, build Python from source,
+# or edit the user's shell startup files.
 # ============================================================================
 
-set -euo pipefail  # Exit on error, unset variables, and failed pipelines
+set -Eeuo pipefail
+IFS=$'\n\t'
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME=$(basename "$0")
+PROJECT_ROOT=$(cd -- "$(dirname -- "$0")" && pwd)
+SOLVER_DIR=sfem_linear
+SOLVER_BIN="$SOLVER_DIR/bin/sfem_linear"
+MONOLIS_DIR="$SOLVER_DIR/submodule/monolis"
+MONOLIS_LIB="$MONOLIS_DIR/lib/libmonolis_solver.a"
+MONOLIS_PATCH="$PROJECT_ROOT/patches/monolis-siga-atomic-openmp.patch"
+if [[ -v VENV_DIR ]]; then
+    VENV_DIR="$VENV_DIR"
+else
+    VENV_DIR="$PROJECT_ROOT/.venv"
+fi
+INSTALL_SYSTEM_DEPS=0
+SKIP_PYTHON=0
+SKIP_SOLVER=0
+CHECK_ONLY=0
+FORCE_REBUILD=0
+PYTHON_CMD=
+
+info() {
+    printf '[INFO] %s\n' "$*"
+}
+
+warn() {
+    printf '[WARN] %s\n' "$*" >&2
+}
+
+die() {
+    printf '[ERROR] %s\n' "$*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'USAGE'
+Usage: ./setup.sh [options]
+
+Options:
+  --install-system-deps  Install the required Ubuntu packages with apt-get.
+  --skip-python          Do not create or update the project-local .venv.
+  --skip-solver          Do not initialise or build sfem_linear.
+  --force-rebuild        Rebuild Monolis and sfem_linear.
+  --check                Check an existing installation without modifying it.
+  -h, --help             Show this help message.
+
+Environment variables:
+  PYTHON=/path/python3.10       Select the Python 3.10 interpreter.
+  VENV_DIR=/path/to/.venv       Select a project virtual-environment directory.
+  SFEM_LINEAR_REPO=<URL>        Use an approved sfem_linear mirror or local clone.
+
+The solver is pinned to the sfem_linear commit recorded by this repository.
+SFEM_LINEAR_REPO must provide that exact commit. It is not automatically
+fast-forwarded to a newer branch tip.
+USAGE
+}
+
+while (( $# > 0 )); do
+    case "$1" in
+        --install-system-deps)
+            INSTALL_SYSTEM_DEPS=1
+            ;;
+        --skip-python)
+            SKIP_PYTHON=1
+            ;;
+        --skip-solver)
+            SKIP_SOLVER=1
+            ;;
+        --force-rebuild)
+            FORCE_REBUILD=1
+            ;;
+        --check)
+            CHECK_ONLY=1
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            die "Unknown option: $1 (run ./$SCRIPT_NAME --help)"
+            ;;
+    esac
+    shift
+done
+
+
+
 cd "$PROJECT_ROOT"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-# Print functions
-print_header() {
-    echo -e "${BLUE}========================================${NC}"
-    echo -e "${BLUE}$1${NC}"
-    echo -e "${BLUE}========================================${NC}"
-}
-
-print_success() {
-    echo -e "${GREEN}✅ $1${NC}"
-}
-
-print_warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
-}
-
-print_error() {
-    echo -e "${RED}❌ $1${NC}"
-}
-
-print_info() {
-    echo -e "${BLUE}ℹ️  $1${NC}"
-}
-
-SUDO=""
-if [ "$(id -u)" -ne 0 ]; then
-    SUDO="sudo"
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    die "Run this script from a Git checkout of the 3D repository."
 fi
 
-APT_UPDATED=0
+if [[ ! -d circular_crack ]]; then
+    die "circular_crack/ is missing; this does not look like the 3D project root."
+fi
 
-apt_update_once() {
-    if [ "$APT_UPDATED" -eq 0 ]; then
-        print_info "Running apt update..."
-        $SUDO apt-get update
-        APT_UPDATED=1
+if [[ ! -f requirements.txt ]]; then
+    die "requirements.txt is missing."
+fi
+
+if [[ ! -f .gitmodules ]]; then
+    die ".gitmodules is missing. Please update the main repository checkout before running setup."
+fi
+
+expected_solver_commit() {
+    local commit
+    commit=$(git ls-tree HEAD -- "$SOLVER_DIR" | awk '$1 == "160000" {print $3}')
+    if [[ -z "$commit" ]]; then
+        die "The main repository does not record a commit for $SOLVER_DIR."
+    fi
+    printf '%s\n' "$commit"
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
+}
+
+resolve_python() {
+    local version
+
+    if [[ -v PYTHON ]]; then
+        PYTHON_CMD="$PYTHON"
+    elif command -v python3.10 >/dev/null 2>&1; then
+        PYTHON_CMD=$(command -v python3.10)
+    else
+        die "Python 3.10 is required. Install it first, or pass PYTHON=/path/to/python3.10."
+    fi
+
+    require_command "$PYTHON_CMD"
+    version=$("$PYTHON_CMD" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    if [[ "$version" != "3.10" ]]; then
+        die "Python 3.10 is required by Pipfile.lock; selected interpreter is Python $version."
     fi
 }
 
-install_apt_packages() {
-    if ! command -v apt-get &> /dev/null; then
-        print_warning "apt-get not found. Skipping automatic system package installation."
-        print_info "Please install build tools, GCC/G++/GFortran 11, OpenMPI, CMake, Git, and Wget manually."
-        return
+run_as_root() {
+    if (( EUID == 0 )); then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        die "Administrator privileges are required for --install-system-deps, but sudo is unavailable."
     fi
+}
 
-    if [ "${SETUP_APT_UPGRADE:-0}" = "1" ]; then
-        apt_update_once
-        print_info "Running apt upgrade because SETUP_APT_UPGRADE=1..."
-        $SUDO apt-get upgrade -y
-    fi
+install_system_dependencies() {
+    local packages
 
-    local packages=(
+    require_command apt-get
+    packages=(
         build-essential
         cmake
-        make
         git
-        wget
-        ca-certificates
-        tar
+        make
         pkg-config
-        binutils
-        gcc-11
-        g++-11
-        gfortran-11
         gfortran
-        openmpi-doc
         openmpi-bin
         libopenmpi-dev
-        zlib1g-dev
-        libncurses5-dev
-        libgdbm-dev
-        libnss3-dev
-        libssl-dev
-        libsqlite3-dev
-        libreadline-dev
-        libffi-dev
-        libbz2-dev
-        liblzma-dev
-        tk-dev
+        python3.10
+        python3.10-venv
+        ca-certificates
     )
 
-    local missing=()
-    local pkg
-    for pkg in "${packages[@]}"; do
-        if ! dpkg -s "$pkg" &> /dev/null; then
-            missing+=("$pkg")
-        fi
-    done
-
-    if [ "${#missing[@]}" -eq 0 ]; then
-        print_success "System build dependencies are already installed"
-        return
-    fi
-
-    apt_update_once
-    print_info "Installing missing system packages: ${missing[*]}"
-    $SUDO apt-get install -y "${missing[@]}"
+    info "Installing required Ubuntu packages (no system upgrade and no compiler-alternative changes)."
+    run_as_root apt-get update
+    run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y "$packages"
 }
 
-register_compiler_alternatives() {
-    local name="$1"
-    local path
-    local version
-    local priority
+create_python_environment() {
+    local venv_version
 
-    shopt -s nullglob
-    for path in /usr/bin/"$name"-[0-9]*; do
-        version="${path##*-}"
-        if [[ "$version" =~ ^[0-9]+$ ]]; then
-            priority=$((version * 10))
-            $SUDO update-alternatives --install "/usr/bin/$name" "$name" "$path" "$priority"
-        fi
-    done
-    shopt -u nullglob
-}
+    resolve_python
 
-configure_gcc_11() {
-    local required=("/usr/bin/gcc-11" "/usr/bin/g++-11" "/usr/bin/gfortran-11")
-    local exe
-
-    for exe in "${required[@]}"; do
-        if [ ! -x "$exe" ]; then
-            print_error "$exe not found after package installation"
-            exit 1
-        fi
-    done
-
-    print_info "Registering compiler alternatives and selecting GCC/G++/GFortran 11..."
-    register_compiler_alternatives "gcc"
-    register_compiler_alternatives "g++"
-    register_compiler_alternatives "gfortran"
-
-    $SUDO update-alternatives --set gcc /usr/bin/gcc-11
-    $SUDO update-alternatives --set g++ /usr/bin/g++-11
-    $SUDO update-alternatives --set gfortran /usr/bin/gfortran-11
-
-    export CC=/usr/bin/gcc-11
-    export CXX=/usr/bin/g++-11
-    export FC=/usr/bin/gfortran-11
-    export OMPI_CC=/usr/bin/gcc-11
-    export OMPI_CXX=/usr/bin/g++-11
-    export OMPI_FC=/usr/bin/gfortran-11
-
-    print_success "Compiler alternatives selected:"
-    print_info "gcc: $(gcc -dumpfullversion -dumpversion)"
-    print_info "g++: $(g++ -dumpfullversion -dumpversion)"
-    print_info "gfortran: $(gfortran -dumpfullversion -dumpversion)"
-}
-
-ensure_system_dependencies() {
-    print_header "Step 0: Installing System Dependencies"
-    install_apt_packages
-    configure_gcc_11
-    echo ""
-}
-
-ensure_system_dependencies
-
-# ============================================================================
-# Step 1: Check directory structure
-# ============================================================================
-print_header "Step 1: Checking Directory Structure"
-
-if [ ! -d "circular_crack" ]; then
-    print_error "circular_crack directory not found!"
-    print_info "Please ensure you are in the project root directory"
-    exit 1
-fi
-
-print_success "circular_crack directory verified"
-
-# Check if sfem_linear exists and is empty
-if [ -d "sfem_linear" ]; then
-    if [ -z "$(ls -A sfem_linear)" ]; then
-        print_warning "sfem_linear directory is empty. Removing..."
-        rmdir sfem_linear
-        print_success "Empty sfem_linear directory removed"
-    else
-        print_info "sfem_linear directory exists with content"
-    fi
-fi
-
-echo ""
-
-# ============================================================================
-# Step 2: Check/Install Python 3.10
-# ============================================================================
-print_header "Step 2: Checking Python 3.10"
-
-PYTHON_VERSION="3.10.6"
-PYTHON_EXEC="/usr/local/bin/python3.10"
-
-if command -v python3.10 &> /dev/null; then
-    CURRENT_VERSION=$(python3.10 --version | awk '{print $2}')
-    print_success "Python 3.10 is already installed (version: $CURRENT_VERSION)"
-    PYTHON_EXEC=$(command -v python3.10)
-else
-    print_warning "Python 3.10 not found. Installing..."
-
-    TMP_BUILD_DIR=$(mktemp -d /tmp/siga-python-build.XXXXXX)
-    print_info "Downloading Python $PYTHON_VERSION..."
-    pushd "$TMP_BUILD_DIR" > /dev/null
-    wget "https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz"
-
-    print_info "Extracting and building Python..."
-    tar -xf "Python-$PYTHON_VERSION.tgz"
-    pushd "Python-$PYTHON_VERSION" > /dev/null
-    ./configure --enable-optimizations --with-ensurepip=install
-    make -j"$(nproc)"
-
-    print_info "Installing Python 3.10..."
-    $SUDO make altinstall
-    popd > /dev/null
-    popd > /dev/null
-    rm -rf "$TMP_BUILD_DIR"
-
-    # Verify installation
-    if python3.10 --version &> /dev/null; then
-        print_success "Python 3.10 installed successfully!"
-        PYTHON_EXEC=$(command -v python3.10)
-    else
-        print_error "Python 3.10 installation failed!"
-        exit 1
-    fi
-fi
-
-echo ""
-
-# ============================================================================
-# Step 3: Check/Install Pipenv
-# ============================================================================
-print_header "Step 3: Checking Pipenv"
-
-if command -v pipenv &> /dev/null; then
-    PIPENV_VERSION=$(pipenv --version | awk '{print $3}')
-    print_success "Pipenv is already installed (version: $PIPENV_VERSION)"
-else
-    print_warning "Pipenv not found. Installing..."
-
-    # Check if pip is available for Python 3.10
-    if ! "$PYTHON_EXEC" -m pip --version &> /dev/null; then
-        print_warning "pip not found for Python 3.10. Installing..."
-
-        if "$PYTHON_EXEC" -m ensurepip --upgrade &> /dev/null; then
-            print_success "pip installed via ensurepip"
-        else
-            print_info "Installing pip using get-pip.py..."
-            TMP_PIP_DIR=$(mktemp -d /tmp/siga-pip-build.XXXXXX)
-            pushd "$TMP_PIP_DIR" > /dev/null
-            wget -q https://bootstrap.pypa.io/get-pip.py
-            "$PYTHON_EXEC" get-pip.py --user
-            popd > /dev/null
-            rm -rf "$TMP_PIP_DIR"
-        fi
-
-        export PATH="$HOME/.local/bin:$PATH"
-
-        if "$PYTHON_EXEC" -m pip --version &> /dev/null; then
-            print_success "pip installed successfully!"
-        else
-            print_error "Failed to install pip for Python 3.10!"
-            print_info "Please install pip manually, then re-run this script."
-            exit 1
-        fi
+    if [[ -e "$VENV_DIR" && ! -x "$VENV_DIR/bin/python" ]]; then
+        die "$VENV_DIR exists but is not a usable virtual environment. Choose another VENV_DIR or remove it manually."
     fi
 
-    print_info "Installing Pipenv..."
-    "$PYTHON_EXEC" -m pip install --user pipenv
-
-    # Add to PATH in .bashrc if not already present
-    BASHRC="$HOME/.bashrc"
-    PATH_EXPORT='export PATH="$HOME/.local/bin:$PATH"'
-
-    if ! grep -q "$PATH_EXPORT" "$BASHRC" 2>/dev/null; then
-        print_info "Adding Pipenv to PATH in .bashrc..."
-        echo "" >> "$BASHRC"
-        echo "# Added by S-IGA setup script" >> "$BASHRC"
-        echo "$PATH_EXPORT" >> "$BASHRC"
-        print_success "PATH updated in .bashrc"
+    if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+        info "Creating project-local Python environment: $VENV_DIR"
+        "$PYTHON_CMD" -m venv "$VENV_DIR"
     fi
 
-    # Update current session
-    export PATH="$HOME/.local/bin:$PATH"
-
-    # Verify installation
-    if command -v pipenv &> /dev/null; then
-        print_success "Pipenv installed successfully!"
-        print_warning "Note: You may need to restart your terminal or run: source ~/.bashrc"
-    else
-        print_error "Pipenv installation failed!"
-        print_info "Please run: source ~/.bashrc"
-        print_info "Then verify with: pipenv --version"
-        exit 1
+    venv_version=$("$VENV_DIR/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    if [[ "$venv_version" != "3.10" ]]; then
+        die "$VENV_DIR uses Python $venv_version, but this release requires Python 3.10. Choose another VENV_DIR or recreate it manually."
     fi
-fi
 
-echo ""
+    info "Installing Python packages into $VENV_DIR"
+    "$VENV_DIR/bin/python" -m pip install --upgrade pip
+    "$VENV_DIR/bin/python" -m pip install -r requirements.txt
 
-# ============================================================================
-# Step 4: Setup Python Virtual Environment
-# ============================================================================
-print_header "Step 4: Setting Up Virtual Environment"
-
-print_info "Activating Pipenv with Python 3.10..."
-export PIPENV_VENV_IN_PROJECT=1  # Create .venv in project directory
-pipenv --python "$PYTHON_EXEC"
-
-print_info "Installing Python dependencies from Pipfile..."
-if pipenv install; then
-    print_success "Virtual environment created and dependencies installed!"
-else
-    print_error "Failed to install dependencies!"
-    exit 1
-fi
-
-if [ -f "requirements.txt" ]; then
-    print_info "Confirming Python dependencies from requirements.txt..."
-    if pipenv run pip install -r requirements.txt; then
-        print_success "requirements.txt dependencies installed!"
-    else
-        print_error "Failed to install requirements.txt dependencies!"
-        exit 1
-    fi
-fi
-
-print_info "Verifying required Python imports..."
-if pipenv run python - <<'PY'
+    "$VENV_DIR/bin/python" - <<'PY'
 import importlib
 
-required_modules = [
-    "numpy",
-    "scipy",
-    "logzero",
-    "pandas",
-    "openpyxl",
-    "numba",
-    "matplotlib",
-]
-
+modules = ("numpy", "scipy", "logzero", "pandas", "openpyxl", "numba", "matplotlib")
 missing = []
-for module_name in required_modules:
+for name in modules:
     try:
-        importlib.import_module(module_name)
+        importlib.import_module(name)
     except Exception as exc:
-        missing.append(f"{module_name}: {exc}")
+        missing.append(f"{name}: {exc}")
 
 if missing:
-    raise SystemExit("Missing or broken Python dependencies:\n" + "\n".join(missing))
+    raise SystemExit("Invalid Python environment:\n" + "\n".join(missing))
 PY
-then
-    print_success "Required Python imports verified"
-else
-    print_error "Python dependency verification failed!"
-    print_info "Try: pipenv install"
-    exit 1
-fi
 
-echo ""
-
-# ============================================================================
-# Step 5: Check/Create logs directory
-# ============================================================================
-print_header "Step 5: Checking Project Structure"
-
-LOGS_DIR="circular_crack/logs"
-if [ ! -d "$LOGS_DIR" ]; then
-    print_warning "logs directory not found. Creating..."
-    mkdir -p "$LOGS_DIR"
-    print_success "Created $LOGS_DIR"
-else
-    print_success "logs directory exists"
-fi
-
-echo ""
-
-# ============================================================================
-# Step 6: Install and Build Fortran Solver
-# ============================================================================
-print_header "Step 6: Installing Fortran Solver"
-
-SOLVER_DIR="sfem_linear"
-SOLVER_BIN="$SOLVER_DIR/bin/sfem_linear"
-SFEM_LINEAR_REPO="${SFEM_LINEAR_REPO:-git@gitlab.com:morita/sfem_linear.git}"
-SFEM_LINEAR_BRANCH="${SFEM_LINEAR_BRANCH:-tianyu_IGA}"
-MONOLIS_PATCH="$PROJECT_ROOT/patches/monolis-siga-atomic-openmp.patch"
-MONOLIS_SOLVER_LIB="lib/libmonolis_solver.a"
-SOLVER_REPO_UPDATED=0
-MONOLIS_CHECKOUT_UPDATED=0
-MONOLIS_SOURCE_PATCHED=0
-
-prepare_sfem_linear_repo() {
-    local before_commit
-    local after_commit
-
-    if [ ! -d "$SOLVER_DIR" ]; then
-        print_warning "sfem_linear directory not found. Cloning from GitLab..."
-        print_info "Cloning $SFEM_LINEAR_REPO..."
-        if git clone "$SFEM_LINEAR_REPO" "$SOLVER_DIR"; then
-            print_success "sfem_linear repository cloned successfully"
-        else
-            print_error "Failed to clone sfem_linear repository!"
-            print_info "Set SFEM_LINEAR_REPO to another clone URL if this machine does not have GitLab SSH access."
-            exit 1
-        fi
-    fi
-
-    if git -C "$SOLVER_DIR" rev-parse --is-inside-work-tree &> /dev/null; then
-        CURRENT_BRANCH=$(git -C "$SOLVER_DIR" branch --show-current 2>/dev/null || true)
-        if [ "$CURRENT_BRANCH" != "$SFEM_LINEAR_BRANCH" ]; then
-            print_info "Switching sfem_linear to branch: $SFEM_LINEAR_BRANCH"
-            if git -C "$SOLVER_DIR" checkout "$SFEM_LINEAR_BRANCH"; then
-                print_success "Switched to branch $SFEM_LINEAR_BRANCH"
-            else
-                print_error "Failed to checkout branch $SFEM_LINEAR_BRANCH"
-                exit 1
-            fi
-        fi
-    else
-        print_error "$SOLVER_DIR exists but is not a git repository"
-        exit 1
-    fi
-
-    if [ "${SKIP_SOLVER_UPDATE:-0}" = "1" ]; then
-        print_warning "SKIP_SOLVER_UPDATE=1; leaving existing sfem_linear checkout unchanged"
-        return
-    fi
-
-    if ! git -C "$SOLVER_DIR" diff --quiet || ! git -C "$SOLVER_DIR" diff --cached --quiet; then
-        print_warning "sfem_linear has local changes; skipping automatic fast-forward update"
-        print_info "Commit/stash those changes, or use a clean clone, if this machine should match the latest solver exactly."
-        return
-    fi
-
-    print_info "Fetching latest sfem_linear/$SFEM_LINEAR_BRANCH..."
-    before_commit=$(git -C "$SOLVER_DIR" rev-parse HEAD)
-    if git -C "$SOLVER_DIR" fetch origin "$SFEM_LINEAR_BRANCH"; then
-        if git -C "$SOLVER_DIR" merge --ff-only "origin/$SFEM_LINEAR_BRANCH"; then
-            after_commit=$(git -C "$SOLVER_DIR" rev-parse HEAD)
-            if [ "$before_commit" != "$after_commit" ]; then
-                SOLVER_REPO_UPDATED=1
-            fi
-            print_success "sfem_linear is up to date with origin/$SFEM_LINEAR_BRANCH"
-        else
-            print_error "sfem_linear cannot fast-forward to origin/$SFEM_LINEAR_BRANCH"
-            print_info "Please resolve the local branch state manually, or reinstall with a clean sfem_linear directory."
-            exit 1
-        fi
-    else
-        print_warning "Could not fetch origin/$SFEM_LINEAR_BRANCH; continuing with the local sfem_linear checkout"
-    fi
+    info "Python environment is ready."
 }
 
-monolis_matrix_source_exists() {
-    local monolis_dir="$1"
+initialise_solver_checkout() {
+    local expected_commit
+    local source_url
+    local actual_commit
 
-    [ -f "$monolis_dir/src/matrix/spmat_handler.f90" ] \
-        || [ -f "$monolis_dir/src/matrix/sparse_util.f90" ]
+    expected_commit=$(expected_solver_commit)
+    source_url=$(git config --file .gitmodules --get submodule.sfem_linear.url || true)
+    [[ -n "$source_url" ]] || die "No URL is configured for the sfem_linear submodule."
+
+    if [[ -v SFEM_LINEAR_REPO ]]; then
+        source_url="$SFEM_LINEAR_REPO"
+    fi
+
+    if [[ -e "$SOLVER_DIR" ]] && ! git -C "$SOLVER_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        die "$SOLVER_DIR exists but is not a Git checkout. Move it aside manually, then rerun setup."
+    fi
+
+    if git -C "$SOLVER_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        if [[ -n "$(git -C "$SOLVER_DIR" status --porcelain)" ]]; then
+            die "$SOLVER_DIR has local changes. Commit, stash, or use a clean checkout before setup."
+        fi
+    fi
+
+    info "Initialising sfem_linear at recorded commit $expected_commit"
+    git submodule sync -- "$SOLVER_DIR"
+
+    # The override is local configuration only: it never rewrites .gitmodules.
+    git config submodule.sfem_linear.url "$source_url"
+
+    if ! git submodule update --init --checkout "$SOLVER_DIR"; then
+        die "Could not obtain sfem_linear. This solver is collaborator-managed; request access or set SFEM_LINEAR_REPO to an approved mirror/local clone containing commit $expected_commit."
+    fi
+
+    actual_commit=$(git -C "$SOLVER_DIR" rev-parse HEAD)
+    if [[ "$actual_commit" != "$expected_commit" ]]; then
+        die "sfem_linear commit mismatch. Expected $expected_commit but checked out $actual_commit."
+    fi
+
+    info "Initialising nested Monolis dependencies."
+    if ! git -C "$SOLVER_DIR" submodule sync --recursive; then
+        die "Could not synchronise nested sfem_linear submodule URLs."
+    fi
+    if ! git -C "$SOLVER_DIR" submodule update --init --recursive; then
+        die "Could not initialise nested Monolis dependencies. Verify access to their Git remotes."
+    fi
+
+    [[ -d "$MONOLIS_DIR" ]] || die "Monolis was not initialised at $MONOLIS_DIR."
 }
 
-monolis_atomic_source_file() {
-    local monolis_dir="$1"
+monolis_atomic_source() {
     local candidate
-
-    for candidate in \
-        "$monolis_dir/src/matrix/spmat_handler.f90" \
-        "$monolis_dir/src/matrix/sparse_util.f90"
-    do
-        if [ -f "$candidate" ] \
-            && grep -q "subroutine monolis_add_scalar_to_sparse_matrix_atomic" "$candidate"; then
-            printf "%s\n" "$candidate"
+    for candidate in "$MONOLIS_DIR/src/matrix/spmat_handler.f90" "$MONOLIS_DIR/src/matrix/sparse_util.f90"; do
+        if [[ -f "$candidate" ]] && grep -q "subroutine monolis_add_scalar_to_sparse_matrix_atomic" "$candidate"; then
+            printf '%s\n' "$candidate"
             return 0
         fi
     done
-
     return 1
 }
 
-monolis_source_has_siga_compatibility() {
-    local monolis_dir="$1"
-
-    monolis_atomic_source_file "$monolis_dir" > /dev/null \
-        && grep -q -- "-fopenmp" "$monolis_dir/Makefile"
+monolis_is_compatible() {
+    monolis_atomic_source >/dev/null 2>&1 && grep -q -- "-fopenmp" "$MONOLIS_DIR/Makefile"
 }
 
-ensure_monolis_source() {
-    local monolis_dir="$SOLVER_DIR/submodule/monolis"
-    local expected_commit
-    local actual_commit
-    local before_commit
-
-    print_info "Syncing sfem_linear submodule URLs..."
-    git -C "$SOLVER_DIR" submodule sync --recursive
-
-    print_info "Checking out monolis version recorded by sfem_linear..."
-    before_commit=$(git -C "$monolis_dir" rev-parse HEAD 2>/dev/null || true)
-    if ! git -C "$SOLVER_DIR" submodule update --init --recursive; then
-        print_error "Failed to update sfem_linear submodules"
-        print_info "If this machine has an old patched monolis checkout, use a clean reinstall:"
-        print_info "  rm -rf sfem_linear"
-        print_info "  FORCE_REBUILD_SOLVER=1 ./setup.sh"
-        exit 1
-    fi
-
-    if ! monolis_matrix_source_exists "$monolis_dir"; then
-        print_error "monolis source was not initialized correctly"
-        exit 1
-    fi
-
-    expected_commit=$(git -C "$SOLVER_DIR" ls-tree HEAD submodule/monolis | awk '{print $3}')
-    actual_commit=$(git -C "$monolis_dir" rev-parse HEAD)
-    if [ "$before_commit" != "$actual_commit" ]; then
-        MONOLIS_CHECKOUT_UPDATED=1
-    fi
-
-    if [ "$expected_commit" != "$actual_commit" ]; then
-        print_error "monolis checkout does not match sfem_linear's recorded submodule commit"
-        print_info "Expected: $expected_commit"
-        print_info "Actual:   $actual_commit"
-        exit 1
-    fi
-    print_success "monolis matches sfem_linear submodule commit: $actual_commit"
-
-    if monolis_source_has_siga_compatibility "$monolis_dir"; then
-        print_success "monolis already contains the S-IGA atomic sparse-matrix addition and OpenMP flags"
+ensure_monolis_compatibility() {
+    if monolis_is_compatible; then
+        info "Monolis already has the required atomic assembly and OpenMP support."
         return
     fi
 
-    if [ ! -f "$monolis_dir/src/matrix/sparse_util.f90" ]; then
-        print_error "monolis submodule lacks the required S-IGA compatibility changes"
-        print_info "This checkout uses the newer Monolis source layout, so the legacy project patch cannot be applied."
-        print_info "Long-term fix: push the monolis changes and update sfem_linear's submodule pointer."
-        exit 1
-    fi
+    [[ -f "$MONOLIS_PATCH" ]] || die "Missing project compatibility patch: $MONOLIS_PATCH"
 
-    if [ ! -f "$MONOLIS_PATCH" ]; then
-        print_error "Missing monolis compatibility patch: $MONOLIS_PATCH"
-        exit 1
-    fi
-
-    print_warning "monolis submodule lacks the required S-IGA compatibility changes. Applying project patch..."
-    if git -C "$monolis_dir" apply --check "$MONOLIS_PATCH"; then
-        git -C "$monolis_dir" apply "$MONOLIS_PATCH"
-        MONOLIS_SOURCE_PATCHED=1
-        print_success "Applied monolis S-IGA compatibility patch"
-    elif git -C "$monolis_dir" apply --reverse --check "$MONOLIS_PATCH"; then
-        print_success "monolis compatibility patch is already applied"
+    if git -C "$MONOLIS_DIR" apply --check "$MONOLIS_PATCH"; then
+        info "Applying the project-local Monolis compatibility patch."
+        git -C "$MONOLIS_DIR" apply "$MONOLIS_PATCH"
+    elif git -C "$MONOLIS_DIR" apply --reverse --check "$MONOLIS_PATCH"; then
+        info "The project-local Monolis compatibility patch is already applied."
     else
-        print_error "Failed to apply monolis compatibility patch"
-        print_info "Long-term fix: push the monolis changes and update sfem_linear's submodule pointer."
-        exit 1
+        die "The Monolis source is incompatible with the project patch. Update the pinned solver dependency rather than forcing this installation."
     fi
 
-    if monolis_source_has_siga_compatibility "$monolis_dir"; then
-        print_success "Verified monolis source compatibility changes"
-    else
-        print_error "monolis source compatibility changes are still missing after patch"
-        exit 1
+    monolis_is_compatible || die "Monolis compatibility checks failed after applying the project patch."
+}
+
+library_has_atomic_symbol() {
+    [[ -f "$MONOLIS_LIB" ]] || return 1
+    nm -a "$MONOLIS_LIB" 2>/dev/null | grep -F "monolis_add_scalar_to_sparse_matrix_atomic" >/dev/null
+}
+monolis_dependencies_ready() {
+    local dependency
+
+    for dependency in lib/libmetis.a lib/libparmetis.a lib/libmonolis_utils.a lib/libgedatsu.a lib/libggtools.a; do
+        [[ -f "$MONOLIS_DIR/$dependency" ]] || return 1
+    done
+}
+
+monolis_needs_rebuild() {
+    if (( FORCE_REBUILD == 1 )); then
+        return 0
     fi
+    if ! monolis_dependencies_ready; then
+        return 0
+    fi
+    if [[ ! -f "$MONOLIS_LIB" ]]; then
+        return 0
+    fi
+    if ! library_has_atomic_symbol; then
+        return 0
+    fi
+    find "$MONOLIS_DIR/src" "$MONOLIS_DIR/Makefile" -type f -newer "$MONOLIS_LIB" -print -quit | grep -q .
+}
+
+solver_needs_rebuild() {
+    if (( FORCE_REBUILD == 1 )); then
+        return 0
+    fi
+    if [[ ! -x "$SOLVER_BIN" ]]; then
+        return 0
+    fi
+    if [[ "$MONOLIS_LIB" -nt "$SOLVER_BIN" ]]; then
+        return 0
+    fi
+    find "$SOLVER_DIR/src" "$SOLVER_DIR/Makefile" -type f -newer "$SOLVER_BIN" -print -quit | grep -q .
 }
 
 build_monolis() {
-    local monolis_dir="$SOLVER_DIR/submodule/monolis"
+    require_command mpif90
+    require_command mpicc
+    require_command nm
 
-    print_info "Building monolis dependencies..."
-    pushd "$monolis_dir" > /dev/null
-    ./install_lib.sh METIS
-
-    print_info "Building monolis with MPI, METIS, and OpenMP support..."
-    make clean > /dev/null 2>&1 || true
-    make -B FLAGS=MPI,METIS
-
-    if monolis_library_has_atomic_symbol "$MONOLIS_SOLVER_LIB"; then
-        print_success "Verified monolis atomic sparse-matrix symbol"
-    else
-        print_error "$MONOLIS_SOLVER_LIB does not contain the monolis atomic sparse-matrix module symbol"
-        print_monolis_atomic_diagnostics
-        popd > /dev/null
-        exit 1
+    info "Building Monolis with MPI, METIS, and OpenMP support."
+    if ! monolis_dependencies_ready; then
+        [[ -x "$MONOLIS_DIR/install_lib.sh" ]] || die "Missing Monolis dependency installer: $MONOLIS_DIR/install_lib.sh"
+        info "Building the nested Monolis libraries required by sfem_linear."
+        (
+            cd "$MONOLIS_DIR"
+            ./install_lib.sh METIS
+        )
     fi
-    popd > /dev/null
+    make -C "$MONOLIS_DIR" clean >/dev/null 2>&1 || true
+    make -C "$MONOLIS_DIR" FLAGS=MPI,METIS FC=mpif90 CC=mpicc
+
+    library_has_atomic_symbol || die "The Monolis library was built without the required atomic sparse-matrix symbol."
 }
 
 build_solver() {
-    print_info "Building sfem_linear solver..."
-    pushd "$SOLVER_DIR" > /dev/null
-    make clean > /dev/null 2>&1 || true
-    if make; then
-        print_success "Solver built successfully!"
+    require_command mpif90
+    require_command mpicc
+
+    info "Building sfem_linear."
+    make -C "$SOLVER_DIR" clean
+    make -C "$SOLVER_DIR" FC="mpif90 -fopenmp" CC="mpicc -std=c99"
+
+    [[ -x "$SOLVER_BIN" ]] || die "sfem_linear build completed without producing $SOLVER_BIN."
+}
+
+check_installation() {
+    local expected_commit
+    local actual_commit
+    local failures=0
+
+    expected_commit=$(expected_solver_commit)
+
+    if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+        warn "Missing Python environment: $VENV_DIR"
+        failures=1
+    fi
+
+    if ! git -C "$SOLVER_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        warn "sfem_linear is not initialised."
+        failures=1
     else
-        print_error "Failed to build solver!"
-        popd > /dev/null
-        exit 1
-    fi
-    popd > /dev/null
-}
-
-monolis_library_has_atomic_symbol() {
-    local monolis_lib="${1:-$SOLVER_DIR/submodule/monolis/$MONOLIS_SOLVER_LIB}"
-    local symbols
-
-    if [ ! -f "$monolis_lib" ]; then
-        return 1
+        actual_commit=$(git -C "$SOLVER_DIR" rev-parse HEAD)
+        if [[ "$actual_commit" != "$expected_commit" ]]; then
+            warn "sfem_linear is at $actual_commit; expected $expected_commit."
+            failures=1
+        fi
     fi
 
-    symbols="$(nm -a "$monolis_lib" 2>/dev/null || true)"
-    [[ "$symbols" == *monolis_add_scalar_to_sparse_matrix_atomic* ]]
+    if [[ ! -x "$SOLVER_BIN" ]]; then
+        warn "Missing solver binary: $SOLVER_BIN"
+        failures=1
+    fi
+
+    if (( failures != 0 )); then
+        die "Installation check failed. Run ./$SCRIPT_NAME to install missing components."
+    fi
+
+    info "Installation check passed."
 }
 
-print_monolis_atomic_diagnostics() {
-    print_info "Diagnostics for monolis atomic symbol:"
-    print_info "mpif90 wrapper:"
-    mpif90 --version | sed -n '1,3p' || true
-    mpif90 -show 2>/dev/null || true
-
-    print_info "Source check:"
-    grep -n "monolis_add_scalar_to_sparse_matrix_atomic" \
-        src/matrix/spmat_handler.f90 \
-        src/matrix/sparse_util.f90 2>/dev/null || true
-
-    print_info "Object symbols containing atomic/add_scalar:"
-    nm -a obj/matrix/spmat_handler.o obj/matrix/sparse_util.o 2>/dev/null \
-        | grep -Ei "atomic|add_scalar" || true
-
-    print_info "Archive symbols containing atomic/add_scalar:"
-    nm -a "$MONOLIS_SOLVER_LIB" 2>/dev/null | grep -Ei "atomic|add_scalar" || true
-}
-
-existing_monolis_library_has_atomic_symbol() {
-    local monolis_lib="$SOLVER_DIR/submodule/monolis/$MONOLIS_SOLVER_LIB"
-
-    monolis_library_has_atomic_symbol "$monolis_lib"
-}
-
-prepare_sfem_linear_repo
-ensure_monolis_source
-
-REBUILD_SOLVER=0
-if [ ! -f "$SOLVER_BIN" ]; then
-    print_warning "Solver binary not found. Building solver and monolis..."
-    REBUILD_SOLVER=1
-elif [ "${FORCE_REBUILD_SOLVER:-0}" = "1" ]; then
-    print_warning "FORCE_REBUILD_SOLVER=1; rebuilding solver and monolis"
-    REBUILD_SOLVER=1
-elif [ "$SOLVER_REPO_UPDATED" -eq 1 ]; then
-    print_warning "sfem_linear was updated during setup. Rebuilding solver and monolis..."
-    REBUILD_SOLVER=1
-elif [ "$MONOLIS_CHECKOUT_UPDATED" -eq 1 ]; then
-    print_warning "monolis checkout was updated during setup. Rebuilding solver and monolis..."
-    REBUILD_SOLVER=1
-elif [ "$MONOLIS_SOURCE_PATCHED" -eq 1 ]; then
-    print_warning "monolis source was patched during setup. Rebuilding solver and monolis..."
-    REBUILD_SOLVER=1
-elif [ ! -f "$SOLVER_DIR/submodule/monolis/$MONOLIS_SOLVER_LIB" ]; then
-    print_warning "Monolis solver library not found. Rebuilding solver and monolis..."
-    REBUILD_SOLVER=1
-elif ! existing_monolis_library_has_atomic_symbol; then
-    print_warning "Existing $MONOLIS_SOLVER_LIB lacks the atomic sparse-matrix symbol. Rebuilding solver and monolis..."
-    REBUILD_SOLVER=1
+if (( CHECK_ONLY == 1 )); then
+    check_installation
+    exit 0
 fi
 
-if [ "$REBUILD_SOLVER" -eq 1 ]; then
-    if [ -f "$SOLVER_BIN" ] && [ "${FORCE_REBUILD_SOLVER:-0}" != "1" ]; then
-        print_info "Rebuild is needed to keep future sfem_linear builds linkable"
-    fi
-    build_monolis
-    build_solver
+if (( INSTALL_SYSTEM_DEPS == 1 )); then
+    install_system_dependencies
+fi
+
+require_command git
+require_command make
+
+if (( SKIP_PYTHON == 0 )); then
+    create_python_environment
 else
-    print_success "Fortran solver binary exists: $SOLVER_BIN"
+    info "Skipping Python environment setup."
 fi
 
-# Verify the binary is executable
-if [ -f "$SOLVER_BIN" ]; then
-    if [ -x "$SOLVER_BIN" ]; then
-        print_success "Solver is ready to use"
+if (( SKIP_SOLVER == 0 )); then
+    initialise_solver_checkout
+    ensure_monolis_compatibility
+
+    if monolis_needs_rebuild; then
+        build_monolis
     else
-        print_warning "Making solver executable..."
-        chmod +x "$SOLVER_BIN"
-        print_success "Solver permissions updated"
+        info "Monolis library is current."
+    fi
+
+    if solver_needs_rebuild; then
+        build_solver
+    else
+        info "sfem_linear binary is current."
     fi
 else
-    print_error "Solver binary still not found after build attempt!"
-    print_info "You may need to manually build sfem_linear:"
-    print_info "  FORCE_REBUILD_SOLVER=1 ./setup.sh"
+    info "Skipping sfem_linear initialisation and build."
 fi
 
-echo ""
+mkdir -p circular_crack/logs
 
-# ============================================================================
-# Installation Complete
-# ============================================================================
-print_header "Installation Complete! 🎉"
-
-echo ""
-print_success "Setup completed successfully!"
-echo ""
-print_info "To use the solver:"
-echo ""
-echo "  1. Activate the virtual environment:"
-echo "     ${GREEN}pipenv shell${NC}"
-echo ""
-echo "  2. Run the solver from circular_crack directory:"
-echo "     ${GREEN}cd circular_crack${NC}"
-echo "     ${GREEN}python3 main.py --help${NC}"
-echo ""
-echo "  Alternative (without entering shell):"
-echo "     ${GREEN}cd circular_crack${NC}"
-echo "     ${GREEN}pipenv run python3 main.py --help${NC}"
-echo ""
-print_info "Virtual environment location: .venv/"
-print_info "Python executable: $PYTHON_EXEC"
-echo ""
-
-# Show installed packages
-print_info "Installed Python packages:"
-pipenv run pip list | grep -E "(numpy|scipy|logzero|pandas|openpyxl|numba|matplotlib)" || true
-echo ""
-
-print_success "You're all set! Happy computing! 🚀"
-echo ""
+info "Setup completed."
+info "Run a representative command with:"
+printf '  %s circular_crack/main.py --help\n' "$VENV_DIR/bin/python"

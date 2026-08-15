@@ -6,46 +6,48 @@ The detailed method, validation, and numerical results are documented in the pap
 
 ## Requirements
 
-- Linux environment (the solver build and execution scripts target Linux)
-- Python 3.10 with the packages in requirements.txt
-- A C/C++ and Fortran toolchain, CMake, Make, and OpenMPI when rebuilding the solver
-- Git, including submodule support
-
-The source includes Pipfile.lock for a reproducible Python environment.
+- Linux environment; the tested installation path is Ubuntu 22.04 or a compatible distribution.
+- Python 3.10.
+- Git, Make, a C/C++ and Fortran toolchain, CMake, and OpenMPI when building the solver.
+- Authorised access to the collaborator-managed sfem_linear and nested Monolis repositories.
 
 ## Installation
 
-Clone the repository with its solver submodule, then run the setup script:
+The main repository records the exact sfem_linear commit required for this release. The solver is a private collaborator dependency, so first obtain access from the maintainers (or an approved mirror containing the recorded commit).
 
-    git clone --recurse-submodules <PUBLIC-REPOSITORY-URL>
+Clone the main repository normally, then run the setup helper:
+
+    git clone <REPOSITORY-URL>
     cd <REPOSITORY-DIRECTORY>
-    ./setup.sh
+    ./setup.sh --install-system-deps
 
-setup.sh installs the Python packages, initialises the nested solver dependencies, and builds sfem_linear when no compatible executable is present. It may request administrator privileges to install compiler and MPI packages. To use an existing Python environment instead, install the packages with:
+If the listed system packages are already installed, omit --install-system-deps. The script creates a project-local .venv, installs requirements.txt, initialises sfem_linear and its nested submodules at the commit pinned by this repository, applies the project compatibility patch when needed, and builds the solver.
 
-    python -m pip install -r requirements.txt
+The script does not change system-wide compiler alternatives, build Python from source, edit shell startup files, or automatically advance sfem_linear to a later branch tip. To use an approved mirror or a local solver clone, set its URL explicitly:
 
-Confirm that sfem_linear/bin/sfem_linear exists before attempting an analysis.
+    SFEM_LINEAR_REPO=<APPROVED-SOLVER-URL-OR-PATH> ./setup.sh
 
-**Release requirement:** the current sfem_linear submodule URL is private. Before making this repository public, replace it with the approved public solver URL (and ensure its nested dependencies are accessible), or include the solver source in the public release. A public clone must be tested with git clone --recurse-submodules from an account without laboratory access.
+The supplied solver location must contain the sfem_linear commit recorded in this repository. Confirm the installation without modifying it with:
+
+    ./setup.sh --check
 
 ## Representative commands
 
-Run commands from circular_crack/.
+Run commands from circular_crack/ with the project Python environment.
 
     cd circular_crack
 
     # Inspect all supported controls.
-    python main.py --help
+    ../.venv/bin/python main.py --help
 
     # Generate input for one dynamic step without running the Fortran solver.
-    python main.py --meshonly --step_start 0 --step_end 1
+    ../.venv/bin/python main.py --meshonly --step_start 0 --step_end 1
 
     # Run one static validation analysis (requires a built solver).
-    python main.py --static_only
+    ../.venv/bin/python main.py --static_only
 
     # Post-process existing results.
-    python main.py --is_K --step_start 1 --step_end 10
+    ../.venv/bin/python main.py --is_K --step_start 1 --step_end 10
 
 For a normal dynamic analysis, omit --meshonly and select the step interval with --step_start and --step_end. The latter is exclusive; for example, --step_start 0 --step_end 10 processes steps 0 through 9. A restart assumes the previous-step files exist. Use --no_restart only when a fresh start is intended.
 
