@@ -69,6 +69,8 @@ def run(step):
         # Set OpenMP threads
         env = os.environ.copy()
         env['OMP_NUM_THREADS'] = str(sp.OPENMP)
+        if 'SFEM_MASS_LUMPING_ALPHA' not in env and 'SFEM_MASS_LUMPING' not in env:
+            env['SFEM_MASS_LUMPING_ALPHA'] = f"{sp.SFEM_MASS_LUMPING_ALPHA:.12g}"
         
         # Prepare command (relative path from step{XXXXX}/ to bin/sfem_linear)
         cmd = ['../../bin/sfem_linear', 'input.dat']
@@ -76,6 +78,10 @@ def run(step):
         logger.info(f"Executing: {' '.join(cmd)}")
         logger.info(f"Working directory: {os.getcwd()}")
         logger.info(f"OpenMP threads: {sp.OPENMP}")
+        logger.info(
+            "SFEM mass-lumping alpha: "
+            f"{env.get('SFEM_MASS_LUMPING_ALPHA', 'legacy override')}"
+        )
         
         # Execute SFEM solver
         if sp.DOS_OPEN == 0:

@@ -68,6 +68,10 @@ nofix = 1  # Changing boundary conditions: 0=No, 1=Yes
 Alpha = -0.02
 Beta = (1.0 - Alpha) ** 2 / 4.0
 Gamma = 0.5 - Alpha
+# Default blended mass-lumping factor used by sfem_linear for dynamic analyses.
+# This is distinct from the HHT-alpha parameter above. Explicit SFEM environment
+# variables may override it for dedicated mass-lumping studies.
+SFEM_MASS_LUMPING_ALPHA = 0.02
 
 # integral point
 ngp = 2
