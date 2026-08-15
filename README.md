@@ -2,7 +2,7 @@
 
 This repository contains the three-dimensional circular-crack implementation used for the hS-IGA CMAME paper. Python code generates the NURBS-based global mesh, local crack-front discretisation, boundary conditions, and solver input. The accompanying sfem_linear Fortran solver performs the linear analysis. Static and dynamic modes, field output, and J-integral/DSIF post-processing are available.
 
-The 2D and 3D implementations are independent research codes. Their method, validation, and numerical results are documented in the paper; this README only records how to install and run the released 3D code.
+The detailed method, validation, and numerical results are documented in the paper; this README only records how to install and run the released 3D code.
 
 ## Requirements
 
@@ -68,4 +68,4 @@ Generated input is placed in circular_crack/inputfiles/. Solver results and logs
 
 ## License
 
-Add the approved licence file and copyright notice before public release. The licensing of sfem_linear and its nested dependencies must be compatible with the chosen release licence.
+This code is released under the [MIT License](LICENSE).
