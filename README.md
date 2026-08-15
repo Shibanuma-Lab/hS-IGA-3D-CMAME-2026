@@ -1,6 +1,6 @@
 # hS-IGA: 3D circular-crack implementation
 
-This repository contains the three-dimensional circular-crack implementation used for the hS-IGA CMAME paper. Python code generates the B-spline-based global mesh, local crack-front discretisation, boundary conditions, and solver input. The accompanying sfem_linear Fortran solver performs the linear analysis. Static and dynamic modes, field output, and J-integral/DSIF post-processing are available.
+This repository contains the three-dimensional circular-crack implementation used for the hS-IGA CMAME paper. Python code generates the B-spline-based global mesh, Lagrangian-type local mesh (near the crack front to ensure high accuracy), boundary conditions, and solver input. The accompanying sfem_linear Fortran solver performs the linear analysis. Static and dynamic modes, field output, and J-integral/DSIF post-processing are available.
 
 The detailed method, validation, and numerical results are documented in the paper; this README only records how to install and run the released 3D code.
 
