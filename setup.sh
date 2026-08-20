@@ -22,6 +22,7 @@ else
     VENV_DIR="$PROJECT_ROOT/.venv"
 fi
 INSTALL_SYSTEM_DEPS=0
+SKIP_SYSTEM_DEPS=0
 SKIP_PYTHON=0
 SKIP_SOLVER=0
 CHECK_ONLY=0
@@ -46,7 +47,8 @@ usage() {
 Usage: ./setup.sh [options]
 
 Options:
-  --install-system-deps  Install the required Ubuntu packages with apt-get.
+  --install-system-deps  Install or refresh all supported Ubuntu dependencies.
+  --skip-system-deps     Do not install system packages; fail if prerequisites are absent.
   --skip-python          Do not create or update the project-local .venv.
   --skip-solver          Do not initialise or build hs_iga.
   --force-rebuild        Rebuild Monolis and hs_iga.
@@ -58,6 +60,8 @@ Environment variables:
   VENV_DIR=/path/to/.venv       Select a project virtual-environment directory.
   HS_IGA_REPO=<URL>        Use an alternate public hs_iga mirror or local clone.
 
+Missing Ubuntu dependencies, including Python 3.10, are installed automatically by default.
+
 The solver is pinned to the hs_iga commit recorded by this repository.
 HS_IGA_REPO must provide that exact commit. It is not automatically
 fast-forwarded to a newer branch tip.
@@ -68,6 +72,9 @@ while (( $# > 0 )); do
     case "$1" in
         --install-system-deps)
             INSTALL_SYSTEM_DEPS=1
+            ;;
+        --skip-system-deps)
+            SKIP_SYSTEM_DEPS=1
             ;;
         --skip-python)
             SKIP_PYTHON=1
@@ -92,7 +99,7 @@ while (( $# > 0 )); do
     shift
 done
 
-
+(( INSTALL_SYSTEM_DEPS == 0 || SKIP_SYSTEM_DEPS == 0 )) || die "--install-system-deps and --skip-system-deps cannot be used together."
 
 cd "$PROJECT_ROOT"
 
@@ -132,13 +139,13 @@ resolve_python() {
     elif command -v python3.10 >/dev/null 2>&1; then
         PYTHON_CMD=$(command -v python3.10)
     else
-        die "Python 3.10 is required. Install it first, or pass PYTHON=/path/to/python3.10."
+        die "Python 3.10 is unavailable after system setup. Rerun without --skip-system-deps, or pass PYTHON=/path/to/python3.10."
     fi
 
     require_command "$PYTHON_CMD"
     version=$("$PYTHON_CMD" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
     if [[ "$version" != "3.10" ]]; then
-        die "Python 3.10 is required by Pipfile.lock; selected interpreter is Python $version."
+        die "Python 3.10 is required by this release; selected interpreter is Python $version."
     fi
 }
 
@@ -148,33 +155,46 @@ run_as_root() {
     elif command -v sudo >/dev/null 2>&1; then
         sudo "$@"
     else
-        die "Administrator privileges are required for --install-system-deps, but sudo is unavailable."
+        die "Administrator privileges are required to install missing Ubuntu packages, but sudo is unavailable."
     fi
 }
 
+require_ubuntu() {
+    [[ -r /etc/os-release ]] || die "Automatic setup currently supports Ubuntu only."
+    . /etc/os-release
+    [[ "$ID" == "ubuntu" ]] || die "Automatic setup currently supports Ubuntu only (detected $ID)."
+}
+
+python310_available() {
+    command -v python3.10 >/dev/null 2>&1 && python3.10 -m venv --help >/dev/null 2>&1
+}
+
+system_dependencies_missing() {
+    local command_name
+
+    for command_name in git make cmake mpicc mpif90; do
+        command -v "$command_name" >/dev/null 2>&1 || return 0
+    done
+    ! python310_available
+}
+
 install_system_dependencies() {
-    local packages
-
     require_command apt-get
-    packages=(
-        build-essential
-        cmake
-        git
-        make
-        pkg-config
-        gfortran
-        openmpi-bin
-        libopenmpi-dev
-        libblas-dev
-        liblapack-dev
-        python3.10
-        python3.10-venv
-        ca-certificates
-    )
+    require_ubuntu
 
-    info "Installing required Ubuntu packages (no system upgrade and no compiler-alternative changes)."
+    info "Installing Ubuntu build prerequisites and Python 3.10."
     run_as_root apt-get update
-    run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y "$packages"
+    run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential cmake git make pkg-config gfortran openmpi-bin libopenmpi-dev libblas-dev liblapack-dev ca-certificates software-properties-common
+    run_as_root add-apt-repository --yes universe
+    run_as_root apt-get update
+
+    if ! apt-cache show python3.10 >/dev/null 2>&1; then
+        info "Python 3.10 is not provided by the configured Ubuntu repositories; enabling deadsnakes PPA."
+        run_as_root add-apt-repository --yes ppa:deadsnakes/ppa
+        run_as_root apt-get update
+    fi
+
+    run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y python3.10 python3.10-venv
 }
 
 create_python_environment() {
@@ -391,8 +411,12 @@ if (( CHECK_ONLY == 1 )); then
     exit 0
 fi
 
-if (( INSTALL_SYSTEM_DEPS == 1 )); then
+if (( SKIP_SYSTEM_DEPS == 0 )) && { (( INSTALL_SYSTEM_DEPS == 1 )) || system_dependencies_missing; }; then
     install_system_dependencies
+elif (( SKIP_SYSTEM_DEPS == 1 )); then
+    info "Skipping system dependency installation."
+else
+    info "Required Ubuntu build tools and Python 3.10 are already available."
 fi
 
 require_command git
