@@ -1,6 +1,6 @@
 # hS-IGA: 3D circular-crack implementation
 
-This repository contains the three-dimensional circular-crack implementation used for the hS-IGA CMAME paper. Python code generates the B-spline-based global mesh, Lagrangian-type local mesh (near the crack front to ensure high accuracy), boundary conditions, and solver input. The accompanying sfem_linear Fortran solver performs the linear analysis. Static and dynamic modes, field output, and J-integral/DSIF post-processing are available.
+This repository contains the three-dimensional circular-crack implementation used for the hS-IGA CMAME paper. Python code generates the B-spline-based global mesh, Lagrangian-type local mesh (near the crack front to ensure high accuracy), boundary conditions, and solver input. The accompanying hs_iga Fortran solver performs the linear analysis. Static and dynamic modes, field output, and J-integral/DSIF post-processing are available.
 
 The detailed method, validation, and numerical results are documented in the paper; this README only records how to install and run the released 3D code.
 
@@ -8,26 +8,27 @@ The detailed method, validation, and numerical results are documented in the pap
 
 - Linux environment; the tested installation path is Ubuntu 22.04 or a compatible distribution.
 - Python 3.10.
-- Git, Make, a C/C++ and Fortran toolchain, CMake, and OpenMPI when building the solver.
-- Authorised access to the collaborator-managed sfem_linear and nested Monolis repositories.
+- Git, Make, C/C++ and Fortran toolchains, CMake, OpenMPI, and BLAS/LAPACK development libraries.
+- Internet access to public GitHub and GitLab repositories. No SSH key, account, or collaborator permission is required.
 
 ## Installation
 
-The main repository records the exact sfem_linear commit required for this release. The solver is a private collaborator dependency, so first obtain access from the maintainers (or an approved mirror containing the recorded commit).
+The main repository pins the exact public hs_iga commit required for this release.
 
 Clone the main repository normally, then run the setup helper:
 
-    git clone <REPOSITORY-URL>
-    cd <REPOSITORY-DIRECTORY>
+    git clone https://github.com/Shibanuma-Lab/S-IGA-cricular-crack-in-3D-solid-linear.git
+    cd S-IGA-cricular-crack-in-3D-solid-linear
     ./setup.sh --install-system-deps
 
-If the listed system packages are already installed, omit --install-system-deps. The script creates a project-local .venv, installs requirements.txt, initialises sfem_linear and its nested submodules at the commit pinned by this repository, applies the project compatibility patch when needed, and builds the solver.
+If the listed system packages are already installed, omit --install-system-deps. The script creates a project-local .venv, installs requirements.txt, initialises the pinned public hs_iga and Monolis submodules recursively over HTTPS, and builds the solver.
+The public upstream manifest for Monolis uses an SSH URL; setup applies a local HTTPS override without modifying that upstream manifest, so no SSH key is needed.
 
-The script does not change system-wide compiler alternatives, build Python from source, edit shell startup files, or automatically advance sfem_linear to a later branch tip. To use an approved mirror or a local solver clone, set its URL explicitly:
+The script does not change system-wide compiler alternatives, build Python from source, edit shell startup files, or automatically advance the pinned public solver commit. To use a public mirror or local public checkout, set its URL explicitly:
 
-    SFEM_LINEAR_REPO=<APPROVED-SOLVER-URL-OR-PATH> ./setup.sh
+    HS_IGA_REPO=<PUBLIC-HS-IGA-URL-OR-PATH> ./setup.sh
 
-The supplied solver location must contain the sfem_linear commit recorded in this repository. Confirm the installation without modifying it with:
+The supplied public solver location must contain the hs_iga commit recorded in this repository. Confirm the installation without modifying it with:
 
     ./setup.sh --check
 
@@ -46,28 +47,30 @@ Run commands from circular_crack/ with the project Python environment.
     # Run one static validation analysis (requires a built solver).
     ../.venv/bin/python main.py --static_only
 
+    # Run the v=500 baseline dynamic case for steps 0 and 1 only.
+    ../.venv/bin/python param_sweep_dynamic.py --velocities 500 --steps 2 --only-baseline --no-postprocess
     # Post-process existing results.
     ../.venv/bin/python main.py --is_K --step_start 1 --step_end 10
 
-For a normal dynamic analysis, omit --meshonly and select the step interval with --step_start and --step_end. The latter is exclusive; for example, --step_start 0 --step_end 10 processes steps 0 through 9. A restart assumes the previous-step files exist. Use --no_restart only when a fresh start is intended.
+The normal Python launcher runs the public solver through one MPI process. For a dynamic analysis, omit --meshonly and select the step interval with --step_start and --step_end. The latter is exclusive; for example, --step_start 0 --step_end 10 processes steps 0 through 9. A restart assumes the previous-step files exist. Use --no_restart only when a fresh start is intended.
 
 ## Configuration and output
 
 Edit the modules in circular_crack/const/ before a production run:
 
-- simulation_params.py controls crack geometry, velocity, step range, and solver settings.
+- simulation_params.py controls crack geometry, velocity, step range, HHT-alpha parameters, the default blended mass-lumping factor, and solver settings.
 - material_property.py defines the elastic material parameters.
 - const_global_mesh.py and const_local_mesh.py define the global and local discretisations.
 - const_jintegral.py defines the J-integral post-processing domain.
 
-Generated input is placed in circular_crack/inputfiles/. Solver results and logs are placed below circular_crack/results/ and circular_crack/logs/. These generated directories are intentionally ignored by Git.
+The default dynamic launcher uses SFEM_MASS_LUMPING_ALPHA=0.02. Generated input is placed in circular_crack/inputfiles/. Solver results and logs are placed below circular_crack/results/ and circular_crack/logs/. These generated directories are intentionally ignored by Git.
 
 ## Scope and limitations
 
 - The code models linear elastic, prescribed circular-crack configurations. The released examples do not autonomously predict initiation, crack-front direction, propagation velocity, or arrest.
 - The bundled Sneddon data support the analytical static reference. Some optional comparison and sweep scripts additionally use case-specific FEM reference data under circular_crack/data/; confirm that the required data are present for the script you choose.
-- Full simulations can be computationally demanding. Start with the one-step mesh-only command and record the configuration, compiler, and thread count for reproducibility.
+- Full simulations can be computationally demanding. Start with the one-step mesh-only command and record the configuration, compiler, MPI/OpenMP settings, and thread count for reproducibility.
 
 ## License
 
-This code is released under the [MIT License](LICENSE).
+This code is released under the [MIT License](LICENSE). The public hs_iga solver and its public dependencies retain their own licenses.

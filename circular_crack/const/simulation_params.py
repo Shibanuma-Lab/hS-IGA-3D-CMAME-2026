@@ -63,12 +63,12 @@ nofix = 1  # Changing boundary conditions: 0=No, 1=Yes
 # Wj1 = 0.51
 
 # HHT-alpha method
-# sfem_linear reads Alpha from input.dat and computes:
+# hs_iga reads Alpha from input.dat and computes:
 #   Beta = (1 - Alpha)^2 / 4, Gamma = 0.5 - Alpha
 Alpha = -0.02
 Beta = (1.0 - Alpha) ** 2 / 4.0
 Gamma = 0.5 - Alpha
-# Default blended mass-lumping factor used by sfem_linear for dynamic analyses.
+# Default blended mass-lumping factor used by hs_iga for dynamic analyses.
 # This is distinct from the HHT-alpha parameter above. Explicit SFEM environment
 # variables may override it for dedicated mass-lumping studies.
 SFEM_MASS_LUMPING_ALPHA = 0.02
@@ -121,7 +121,7 @@ DOS_OPEN = 2    # dos screen 0: Not open　1:Open and close　2:Keeping open
 
 ABO = 0  # 1:abort just before calculation of solver
 USER_NAME = "lab"
-REPO_NAME = "sfem_linear"
+REPO_NAME = "hs_iga"
 
 # STEP_TIME = 1.2915155311516764e-6
 

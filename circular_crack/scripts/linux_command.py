@@ -11,8 +11,8 @@ def run(step):
     Execute SFEM solver for the given step
     
     Workflow:
-    1. Copy inputfiles/step{XXXXX} to sfem_linear/example/
-    2. Run solver in sfem_linear/example/step{XXXXX}/ with ../../bin/sfem_linear
+    1. Copy inputfiles/step{XXXXX} to hs_iga/example/
+    2. Run solver in hs_iga/example/step{XXXXX}/ with ../../bin/hs_iga
     3. Move results back to circular_crack/results/step{XXXXX}/
     """
     logger.info(f"Running SFEM solver for step {step}")
@@ -28,7 +28,7 @@ def run(step):
     sfem_dir = os.path.join(project_root, sp.REPO_NAME)
     sfem_example_dir = os.path.join(sfem_dir, "example")
     sfem_step_dir = os.path.join(sfem_example_dir, f"step{str_step}")
-    sfem_executable = os.path.join(sfem_dir, "bin", "sfem_linear")
+    sfem_executable = os.path.join(sfem_dir, "bin", "hs_iga")
     
     # Results directory
     results_dir = os.path.join(current_dir, "results")
@@ -48,7 +48,7 @@ def run(step):
     # Create example directory if not exists
     os.makedirs(sfem_example_dir, exist_ok=True)
     
-    # Step 1: Copy input directory to sfem_linear/example/
+    # Step 1: Copy input directory to hs_iga/example/
     logger.info(f"Copying {input_dir} to {sfem_example_dir}/")
     try:
         if os.path.exists(sfem_step_dir):
@@ -59,7 +59,7 @@ def run(step):
         logger.error(f"Failed to copy input files: {e}")
         return False
     
-    # Step 2: Run solver in sfem_linear/example/step{XXXXX}/
+    # Step 2: Run solver in hs_iga/example/step{XXXXX}/
     logger.info(f"Running solver in {sfem_step_dir}")
     original_dir = os.getcwd()
     
@@ -69,11 +69,12 @@ def run(step):
         # Set OpenMP threads
         env = os.environ.copy()
         env['OMP_NUM_THREADS'] = str(sp.OPENMP)
+        env['SFEM_OMP_THREADS'] = str(sp.OPENMP)
         if 'SFEM_MASS_LUMPING_ALPHA' not in env and 'SFEM_MASS_LUMPING' not in env:
             env['SFEM_MASS_LUMPING_ALPHA'] = f"{sp.SFEM_MASS_LUMPING_ALPHA:.12g}"
         
-        # Prepare command (relative path from step{XXXXX}/ to bin/sfem_linear)
-        cmd = ['../../bin/sfem_linear', 'input.dat']
+        # Prepare command (relative path from step{XXXXX}/ to bin/hs_iga)
+        cmd = ['mpirun', '-np', '1', '../../bin/hs_iga', 'input.dat']
         
         logger.info(f"Executing: {' '.join(cmd)}")
         logger.info(f"Working directory: {os.getcwd()}")

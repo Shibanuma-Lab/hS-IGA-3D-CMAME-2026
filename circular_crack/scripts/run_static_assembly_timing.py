@@ -21,8 +21,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 CIRCULAR_DIR = SCRIPT_DIR.parent
 PROJECT_ROOT = CIRCULAR_DIR.parent
-SFEM_DIR = PROJECT_ROOT / "sfem_linear"
-EXECUTABLE = SFEM_DIR / "bin" / "sfem_linear"
+HS_IGA_DIR = PROJECT_ROOT / "hs_iga"
+EXECUTABLE = HS_IGA_DIR / "bin" / "hs_iga"
 RESULTS_DIR = CIRCULAR_DIR / "results" / "verification_5_2"
 OUTPUT_DIR = RESULTS_DIR / "assembly_timing"
 TMP_ROOT = PROJECT_ROOT / ".tmp_static_assembly_timing"
@@ -155,7 +155,7 @@ def run_case(row: dict[str, str], threads: int, force: bool) -> dict[str, str]:
 
     with stdout_log.open("w") as stdout_file:
         completed = subprocess.run(
-            [str(EXECUTABLE), "input.dat"],
+            ["mpirun", "-np", "1", str(EXECUTABLE), "input.dat"],
             cwd=run_dir,
             env=env,
             stdout=stdout_file,

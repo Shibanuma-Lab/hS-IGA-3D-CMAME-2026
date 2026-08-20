@@ -12,11 +12,10 @@ IFS=$'\n\t'
 
 SCRIPT_NAME=$(basename "$0")
 PROJECT_ROOT=$(cd -- "$(dirname -- "$0")" && pwd)
-SOLVER_DIR=sfem_linear
-SOLVER_BIN="$SOLVER_DIR/bin/sfem_linear"
+SOLVER_DIR=hs_iga
+SOLVER_BIN="$SOLVER_DIR/bin/hs_iga"
 MONOLIS_DIR="$SOLVER_DIR/submodule/monolis"
 MONOLIS_LIB="$MONOLIS_DIR/lib/libmonolis_solver.a"
-MONOLIS_PATCH="$PROJECT_ROOT/patches/monolis-siga-atomic-openmp.patch"
 if [[ -v VENV_DIR ]]; then
     VENV_DIR="$VENV_DIR"
 else
@@ -49,18 +48,18 @@ Usage: ./setup.sh [options]
 Options:
   --install-system-deps  Install the required Ubuntu packages with apt-get.
   --skip-python          Do not create or update the project-local .venv.
-  --skip-solver          Do not initialise or build sfem_linear.
-  --force-rebuild        Rebuild Monolis and sfem_linear.
+  --skip-solver          Do not initialise or build hs_iga.
+  --force-rebuild        Rebuild Monolis and hs_iga.
   --check                Check an existing installation without modifying it.
   -h, --help             Show this help message.
 
 Environment variables:
   PYTHON=/path/python3.10       Select the Python 3.10 interpreter.
   VENV_DIR=/path/to/.venv       Select a project virtual-environment directory.
-  SFEM_LINEAR_REPO=<URL>        Use an approved sfem_linear mirror or local clone.
+  HS_IGA_REPO=<URL>        Use an alternate public hs_iga mirror or local clone.
 
-The solver is pinned to the sfem_linear commit recorded by this repository.
-SFEM_LINEAR_REPO must provide that exact commit. It is not automatically
+The solver is pinned to the hs_iga commit recorded by this repository.
+HS_IGA_REPO must provide that exact commit. It is not automatically
 fast-forwarded to a newer branch tip.
 USAGE
 }
@@ -114,8 +113,7 @@ if [[ ! -f .gitmodules ]]; then
 fi
 
 expected_solver_commit() {
-    local commit
-    commit=$(git ls-tree HEAD -- "$SOLVER_DIR" | awk '$1 == "160000" {print $3}')
+    commit=$(git rev-parse ":$SOLVER_DIR")
     if [[ -z "$commit" ]]; then
         die "The main repository does not record a commit for $SOLVER_DIR."
     fi
@@ -167,6 +165,8 @@ install_system_dependencies() {
         gfortran
         openmpi-bin
         libopenmpi-dev
+        libblas-dev
+        liblapack-dev
         python3.10
         python3.10-venv
         ca-certificates
@@ -228,18 +228,18 @@ initialise_solver_checkout() {
     local actual_commit
 
     expected_commit=$(expected_solver_commit)
-    source_url=$(git config --file .gitmodules --get submodule.sfem_linear.url || true)
-    [[ -n "$source_url" ]] || die "No URL is configured for the sfem_linear submodule."
+    source_url=$(git config --file .gitmodules --get submodule.hs_iga.url || true)
+    [[ -n "$source_url" ]] || die "No URL is configured for the hs_iga submodule."
 
-    if [[ -v SFEM_LINEAR_REPO ]]; then
-        source_url="$SFEM_LINEAR_REPO"
+    if [[ -v HS_IGA_REPO ]]; then
+        source_url="$HS_IGA_REPO"
     fi
 
     if [[ -e "$SOLVER_DIR" ]] && ! is_solver_checkout; then
         # A normal clone can leave an empty directory for an uninitialised submodule.
         # Remove only that empty placeholder; preserve any non-empty user directory.
         if [[ -d "$SOLVER_DIR" ]] && rmdir "$SOLVER_DIR"; then
-            info "Removed empty sfem_linear submodule placeholder."
+            info "Removed empty hs_iga submodule placeholder."
         else
             die "$SOLVER_DIR exists but is not a Git checkout. Move it aside manually, then rerun setup."
         fi
@@ -251,70 +251,42 @@ initialise_solver_checkout() {
         fi
     fi
 
-    info "Initialising sfem_linear at recorded commit $expected_commit"
+    info "Initialising hs_iga at recorded commit $expected_commit"
     git submodule sync -- "$SOLVER_DIR"
 
     # The override is local configuration only: it never rewrites .gitmodules.
-    git config submodule.sfem_linear.url "$source_url"
+    git config submodule.hs_iga.url "$source_url"
 
     if ! git submodule update --init --checkout "$SOLVER_DIR"; then
-        die "Could not obtain sfem_linear. This solver is collaborator-managed; request access or set SFEM_LINEAR_REPO to an approved mirror/local clone containing commit $expected_commit."
+        die "Could not obtain hs_iga. Verify HTTPS access to the public repository or set HS_IGA_REPO to an alternate public mirror/local clone containing commit $expected_commit."
     fi
 
     actual_commit=$(git -C "$SOLVER_DIR" rev-parse HEAD)
     if [[ "$actual_commit" != "$expected_commit" ]]; then
-        die "sfem_linear commit mismatch. Expected $expected_commit but checked out $actual_commit."
+        die "hs_iga commit mismatch. Expected $expected_commit but checked out $actual_commit."
     fi
 
     info "Initialising nested Monolis dependencies."
     if ! git -C "$SOLVER_DIR" submodule sync --recursive; then
-        die "Could not synchronise nested sfem_linear submodule URLs."
+        die "Could not synchronise nested hs_iga submodule URLs."
     fi
+    # The public hS IGA manifest records Monolis with an SSH URL.  Use a local
+    # HTTPS override so no GitHub account or SSH key is required.
+    git -C "$SOLVER_DIR" config submodule.submodule/monolis.url "https://github.com/nqomorita/monolis.git"
     if ! git -C "$SOLVER_DIR" submodule update --init --recursive; then
-        die "Could not initialise nested Monolis dependencies. Verify access to their Git remotes."
+        die "Could not initialise nested Monolis dependencies. Verify network access to their public Git remotes."
     fi
 
     [[ -d "$MONOLIS_DIR" ]] || die "Monolis was not initialised at $MONOLIS_DIR."
 }
 
-monolis_atomic_source() {
-    local candidate
-    for candidate in "$MONOLIS_DIR/src/matrix/spmat_handler.f90" "$MONOLIS_DIR/src/matrix/sparse_util.f90"; do
-        if [[ -f "$candidate" ]] && grep -q "subroutine monolis_add_scalar_to_sparse_matrix_atomic" "$candidate"; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    done
-    return 1
+confirm_public_monolis_layout() {
+    info "Using the Monolis revision pinned by public hs_iga; no private compatibility patch is required."
 }
 
-monolis_is_compatible() {
-    monolis_atomic_source >/dev/null 2>&1 && grep -q -- "-fopenmp" "$MONOLIS_DIR/Makefile"
-}
-
-ensure_monolis_compatibility() {
-    if monolis_is_compatible; then
-        info "Monolis already has the required atomic assembly and OpenMP support."
-        return
-    fi
-
-    [[ -f "$MONOLIS_PATCH" ]] || die "Missing project compatibility patch: $MONOLIS_PATCH"
-
-    if git -C "$MONOLIS_DIR" apply --check "$MONOLIS_PATCH"; then
-        info "Applying the project-local Monolis compatibility patch."
-        git -C "$MONOLIS_DIR" apply "$MONOLIS_PATCH"
-    elif git -C "$MONOLIS_DIR" apply --reverse --check "$MONOLIS_PATCH"; then
-        info "The project-local Monolis compatibility patch is already applied."
-    else
-        die "The Monolis source is incompatible with the project patch. Update the pinned solver dependency rather than forcing this installation."
-    fi
-
-    monolis_is_compatible || die "Monolis compatibility checks failed after applying the project patch."
-}
-
-library_has_atomic_symbol() {
+monolis_library_exists() {
     [[ -f "$MONOLIS_LIB" ]] || return 1
-    nm -a "$MONOLIS_LIB" 2>/dev/null | grep -F "monolis_add_scalar_to_sparse_matrix_atomic" >/dev/null
+    return 0
 }
 monolis_dependencies_ready() {
     local dependency
@@ -334,7 +306,7 @@ monolis_needs_rebuild() {
     if [[ ! -f "$MONOLIS_LIB" ]]; then
         return 0
     fi
-    if ! library_has_atomic_symbol; then
+    if ! monolis_library_exists; then
         return 0
     fi
     find "$MONOLIS_DIR/src" "$MONOLIS_DIR/Makefile" -type f -newer "$MONOLIS_LIB" -print -quit | grep -q .
@@ -356,32 +328,27 @@ solver_needs_rebuild() {
 build_monolis() {
     require_command mpif90
     require_command mpicc
-    require_command nm
+    require_command cmake
 
-    info "Building Monolis with MPI, METIS, and OpenMP support."
-    if ! monolis_dependencies_ready; then
-        [[ -x "$MONOLIS_DIR/install_lib.sh" ]] || die "Missing Monolis dependency installer: $MONOLIS_DIR/install_lib.sh"
-        info "Building the nested Monolis libraries required by sfem_linear."
-        (
-            cd "$MONOLIS_DIR"
-            ./install_lib.sh METIS
-        )
-    fi
-    make -C "$MONOLIS_DIR" clean >/dev/null 2>&1 || true
-    make -C "$MONOLIS_DIR" FLAGS=MPI,METIS FC=mpif90 CC=mpicc
+    [[ -x "$SOLVER_DIR/install_lib.sh" ]] || die "Missing public hs_iga dependency installer: $SOLVER_DIR/install_lib.sh"
+    info "Building the Monolis dependencies pinned by public hs_iga."
+    (
+        cd "$SOLVER_DIR"
+        ./install_lib.sh
+    )
 
-    library_has_atomic_symbol || die "The Monolis library was built without the required atomic sparse-matrix symbol."
+    [[ -f "$MONOLIS_LIB" ]] || die "Public hs_iga dependency build did not produce $MONOLIS_LIB."
 }
 
 build_solver() {
     require_command mpif90
     require_command mpicc
 
-    info "Building sfem_linear."
+    info "Building hs_iga."
     make -C "$SOLVER_DIR" clean
     make -C "$SOLVER_DIR" FC="mpif90 -fopenmp" CC="mpicc -std=c99"
 
-    [[ -x "$SOLVER_BIN" ]] || die "sfem_linear build completed without producing $SOLVER_BIN."
+    [[ -x "$SOLVER_BIN" ]] || die "hs_iga build completed without producing $SOLVER_BIN."
 }
 
 check_installation() {
@@ -397,12 +364,12 @@ check_installation() {
     fi
 
     if ! is_solver_checkout; then
-        warn "sfem_linear is not initialised."
+        warn "hs_iga is not initialised."
         failures=1
     else
         actual_commit=$(git -C "$SOLVER_DIR" rev-parse HEAD)
         if [[ "$actual_commit" != "$expected_commit" ]]; then
-            warn "sfem_linear is at $actual_commit; expected $expected_commit."
+            warn "hs_iga is at $actual_commit; expected $expected_commit."
             failures=1
         fi
     fi
@@ -439,7 +406,7 @@ fi
 
 if (( SKIP_SOLVER == 0 )); then
     initialise_solver_checkout
-    ensure_monolis_compatibility
+    confirm_public_monolis_layout
 
     if monolis_needs_rebuild; then
         build_monolis
@@ -450,10 +417,10 @@ if (( SKIP_SOLVER == 0 )); then
     if solver_needs_rebuild; then
         build_solver
     else
-        info "sfem_linear binary is current."
+        info "hs_iga binary is current."
     fi
 else
-    info "Skipping sfem_linear initialisation and build."
+    info "Skipping hs_iga initialisation and build."
 fi
 
 mkdir -p circular_crack/logs
